@@ -1,8 +1,17 @@
 import { parseBuffer } from "music-metadata";
 
-/** Stores an uploaded audio file in R2 and indexes it in D1. Capped by the Worker request body limit (100 MB). */
-export async function ingest(env: Env, familyId: string, file: File): Promise<string> {
+const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+
+/**
+ * Stores an uploaded audio file in R2 and indexes it in D1. Capped by the Worker request body limit (100 MB).
+ * A file identical to one already in the family library (same SHA-256) is not stored again; the existing track id comes back.
+ */
+export async function ingest(env: Env, familyId: string, file: File): Promise<{ id: string; duplicate: boolean }> {
   const buf = await file.arrayBuffer();
+  const hash = hex(await crypto.subtle.digest("SHA-256", buf));
+  const existing = await env.DB.prepare("SELECT id FROM tracks WHERE family_id = ? AND content_hash = ? AND deleted = 0 LIMIT 1")
+    .bind(familyId, hash).first<{ id: string }>();
+  if (existing) return { id: existing.id, duplicate: true };
   const id = crypto.randomUUID();
   const key = `families/${familyId}/tracks/${id}`;
   const meta = await parseBuffer(new Uint8Array(buf), { mimeType: file.type || undefined }, { duration: true }).catch(() => null);
@@ -18,11 +27,11 @@ export async function ingest(env: Env, familyId: string, file: File): Promise<st
   }
   const title = common?.title || file.name.replace(/\.[^.]+$/, "");
   await env.DB.prepare(
-    "INSERT INTO tracks (id, family_id, source, source_key, title, artist, album, duration, track_no, art_key, size, etag, mime, updated_at) " +
-      "VALUES (?, ?, 'r2', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO tracks (id, family_id, source, source_key, title, artist, album, duration, track_no, art_key, size, etag, mime, updated_at, content_hash) " +
+      "VALUES (?, ?, 'r2', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).bind(
     id, familyId, key, title, common?.artist ?? "", common?.album ?? "", meta?.format.duration ?? 0, common?.track.no ?? 0,
-    artKey, buf.byteLength, id, mime, Date.now(),
+    artKey, buf.byteLength, id, mime, Date.now(), hash,
   ).run();
-  return id;
+  return { id, duplicate: false };
 }

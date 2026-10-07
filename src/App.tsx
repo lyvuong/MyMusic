@@ -227,8 +227,7 @@ function Upload({ onDone }: { onDone: () => Promise<void> }) {
       const set = (state: string) => setItems((cur) => cur.map((x, j) => (j === i ? { ...x, state } : x)));
       set("uploading");
       try {
-        await api.upload(f);
-        set("done");
+        set((await api.upload(f)) ? "already in library, skipped" : "done");
       } catch (e) {
         set(e instanceof Error ? e.message : "failed");
       }

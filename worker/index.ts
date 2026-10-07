@@ -105,8 +105,14 @@ app.delete("/api/playlists/:id", async (c) => {
 app.post("/api/upload", async (c) => {
   const form = await c.req.formData();
   const ids: string[] = [];
-  for (const f of form.getAll("file")) if (typeof f !== "string") ids.push(await ingest(c.env, c.get("family").familyId, f));
-  return c.json({ ids });
+  let duplicates = 0;
+  for (const f of form.getAll("file")) {
+    if (typeof f === "string") continue;
+    const r = await ingest(c.env, c.get("family").familyId, f);
+    ids.push(r.id);
+    if (r.duplicate) duplicates++;
+  }
+  return c.json({ ids, duplicates });
 });
 
 app.delete("/api/tracks/:id", async (c) => {

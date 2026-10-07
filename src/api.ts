@@ -57,11 +57,13 @@ export const api = {
   deletePlaylist: (id: string) => call<void>("DELETE", `/api/playlists/${id}`),
   deleteTrack: (id: string) => call<void>("DELETE", `/api/tracks/${id}`),
 
-  async upload(file: File): Promise<void> {
+  /** Resolves to true when the library already had an identical file, so nothing new was stored. */
+  async upload(file: File): Promise<boolean> {
     const form = new FormData();
     form.append("file", file);
     const res = await fetch("/api/upload", { method: "POST", headers: { Authorization: `Bearer ${await token()}` }, body: form });
     if (!res.ok) throw new ApiError(res.status, `Upload failed (${res.status})`);
+    return ((await res.json()) as { duplicates: number }).duplicates > 0;
   },
 
   /** URL for <audio>/<img>, which cannot send an Authorization header. */
