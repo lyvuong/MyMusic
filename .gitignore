@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dev-dist/
+.wrangler/
+.dev.vars
+.env.local
+*.log
+key.properties
+*.jks
+service-account*.json

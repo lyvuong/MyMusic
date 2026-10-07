@@ -1,0 +1,28 @@
+{
+  "name": "mymusic",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "FIREBASE_PROJECT_ID": "REPLACE_ME",
+    // Comma-separated emails allowed to sign in.
+    "ALLOWED_EMAILS": "lyvuong@lv5.org",
+    // NAS (Navidrome/Subsonic) behind a Cloudflare Tunnel. Empty = NAS disabled.
+    "NAS_BASE_URL": ""
+  },
+  "r2_buckets": [
+    { "binding": "MUSIC", "bucket_name": "mymusic-files" },
+    { "binding": "RELEASES", "bucket_name": "mymusic-releases" }
+  ],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "mymusic", "database_id": "REPLACE_ME", "migrations_dir": "migrations" }
+  ],
+  // Secrets: NAS_CF_ACCESS_ID, NAS_CF_ACCESS_SECRET, NAS_USER, NAS_PASSWORD
+  "observability": { "enabled": true }
+}
