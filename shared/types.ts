@@ -17,7 +17,16 @@ export interface Track {
 export interface Playlist {
   id: string;
   name: string;
+  ownerUid: string;
+  shared: boolean;
   trackIds: string[];
   updatedAt: number;
   deleted: boolean;
+}
+
+export interface FamilyInfo {
+  id: string;
+  name: string;
+  role: "owner" | "member";
+  members: { uid: string; displayName: string; email: string; role: "owner" | "member" }[];
 }

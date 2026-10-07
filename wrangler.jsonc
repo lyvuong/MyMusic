@@ -11,8 +11,6 @@
   },
   "vars": {
     "FIREBASE_PROJECT_ID": "REPLACE_ME",
-    // Comma-separated emails allowed to sign in.
-    "ALLOWED_EMAILS": "lyvuong@lv5.org",
     // NAS (Navidrome/Subsonic) behind a Cloudflare Tunnel. Empty = NAS disabled.
     "NAS_BASE_URL": ""
   },

@@ -4,7 +4,6 @@ interface Env {
   MUSIC: R2Bucket;
   RELEASES: R2Bucket;
   FIREBASE_PROJECT_ID: string;
-  ALLOWED_EMAILS: string;
   AUTH_EMULATOR?: string;
   NAS_BASE_URL?: string;
   NAS_CF_ACCESS_ID?: string;

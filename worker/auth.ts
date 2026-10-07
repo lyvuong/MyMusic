@@ -7,27 +7,26 @@ const JWKS = createRemoteJWKSet(
 export interface User {
   uid: string;
   email: string;
+  name: string;
 }
 
-/** Verifies a Firebase ID token and checks the email against ALLOWED_EMAILS. */
+/** Verifies a Firebase Auth ID token (Google, Apple, ... any provider the Firebase project enables). */
 export async function verifyIdToken(token: string, env: Env): Promise<User> {
-  let uid: string | undefined;
-  let email: string | undefined;
+  let claims: Record<string, unknown>;
   if (env.AUTH_EMULATOR === "true") {
-    const c = decodeJwt(token);
-    uid = c.sub;
-    email = c.email as string | undefined;
+    claims = decodeJwt(token); // the emulator issues unsigned tokens (local dev only)
   } else {
     const { payload } = await jwtVerify(token, JWKS, {
       issuer: `https://securetoken.google.com/${env.FIREBASE_PROJECT_ID}`,
       audience: env.FIREBASE_PROJECT_ID,
       algorithms: ["RS256"],
     });
-    uid = payload.sub;
-    email = payload.email as string | undefined;
+    claims = payload;
   }
-  if (!uid || !email) throw new Error("token missing sub/email");
-  const allowed = env.ALLOWED_EMAILS.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
-  if (!allowed.includes(email.toLowerCase())) throw new Error("email not allowed");
-  return { uid, email };
+  if (typeof claims.sub !== "string") throw new Error("token missing sub");
+  return {
+    uid: claims.sub,
+    email: typeof claims.email === "string" ? claims.email : "",
+    name: typeof claims.name === "string" ? claims.name : "",
+  };
 }
