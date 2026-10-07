@@ -1,4 +1,4 @@
 {
-  "API_URL": "https://REPLACE_ME.example.com",
-  "GOOGLE_SERVER_CLIENT_ID": ""
+  "API_URL": "https://mymusic.lyvuong.workers.dev",
+  "GOOGLE_SERVER_CLIENT_ID": "256538235270-rfkmussp1ma4rtcg74mtj1pqm6rv96m2.apps.googleusercontent.com"
 }
