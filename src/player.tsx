@@ -65,7 +65,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     if (!current) return;
-    navigator.mediaSession.metadata = new MediaMetadata({ title: current.title, artist: current.artist, album: current.album });
+    const meta = { title: current.title, artist: current.artist, album: current.album };
+    navigator.mediaSession.metadata = new MediaMetadata(meta);
+    if (current.hasArt) {
+      void api.mediaUrl("art", current.id).then((src) => {
+        if (navigator.mediaSession.metadata?.title === meta.title) {
+          navigator.mediaSession.metadata = new MediaMetadata({ ...meta, artwork: [{ src: new URL(src, location.origin).href, sizes: "600x600" }] });
+        }
+      });
+    }
     navigator.mediaSession.setActionHandler("play", () => void audio.current?.play());
     navigator.mediaSession.setActionHandler("pause", () => audio.current?.pause());
     navigator.mediaSession.setActionHandler("nexttrack", next);
@@ -100,15 +108,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Resolves a token-bearing media URL for an id; null until ready or when there is none. */
+function useMediaUrl(kind: "art" | "artist-art", id: string | null) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setUrl(null);
+    if (id) void api.mediaUrl(kind, id).then(setUrl);
+  }, [kind, id]);
+  return url;
+}
+
 export function PlayerBar() {
   const p = usePlayer();
+  const art = useMediaUrl("art", p.current?.hasArt ? p.current.id : null);
+  const artist = useMediaUrl("artist-art", p.current?.artist ? encodeURIComponent(p.current.artist) : null);
   if (!p.current) return null;
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   return (
     <footer className="player">
-      <div className="player-title">
-        <strong>{p.current.title}</strong>
-        <span>{p.current.artist}</span>
+      <div className="player-info">
+        {art && <img className="cover" src={art} alt="" onError={(e) => { e.currentTarget.hidden = true; }} />}
+        <div className="player-title">
+          <strong>{p.current.title}</strong>
+          <span>{p.current.artist}</span>
+        </div>
+        {artist && <img className="artist" src={artist} alt="" onError={(e) => { e.currentTarget.hidden = true; }} />}
       </div>
       <div className="player-controls">
         <button onClick={p.prev} aria-label="Previous">⏮</button>

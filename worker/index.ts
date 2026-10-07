@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
+import { findAlbumArt, findArtistImage } from "./artwork";
 import { delta, savePlaylist } from "./library";
 import { ingest } from "./upload";
 
@@ -12,7 +13,7 @@ const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/app/android/")) return next(); // APK download: the app is not signed in yet on first install
   const url = new URL(c.req.url);
-  const mediaPath = /^\/api\/(stream|art)\//.test(url.pathname);
+  const mediaPath = /^\/api\/(stream|art|artist-art)\//.test(url.pathname);
   const header = c.req.header("Authorization")?.replace(/^Bearer /, "");
   const token = header ?? (mediaPath ? url.searchParams.get("access_token") : null);
   if (!token) return c.json({ error: "unauthorized" }, 401);
@@ -31,7 +32,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/family/invites"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/family/invites"]) {
   app.use(p, needFamily);
 }
 
@@ -149,6 +150,43 @@ app.get("/api/stream/:id", async (c) => {
   if (!row) return c.json({ error: "not found" }, 404);
   if (row.source === "r2") return serveR2(c.env.MUSIC, row.source_key, c.req.raw);
   return c.json({ error: "nas not configured" }, 501); // NAS proxy: build step 5
+});
+
+/** Looks up missing album covers online for up to 10 tracks per call; the client repeats until `remaining` is 0. */
+app.post("/api/art/fetch", async (c) => {
+  const fam = c.get("family").familyId;
+  const missing = "family_id = ? AND source = 'r2' AND deleted = 0 AND art_key IS NULL AND art_tried = 0";
+  const rows = await c.env.DB.prepare(`SELECT id, title, artist, album FROM tracks WHERE ${missing} LIMIT 10`)
+    .bind(fam).all<{ id: string; title: string; artist: string; album: string }>();
+  let updated = 0;
+  for (const r of rows.results) {
+    const img = await findAlbumArt(r.artist, r.album, r.title).catch(() => null);
+    if (img) {
+      const key = `families/${fam}/art/${r.id}`;
+      await c.env.MUSIC.put(key, img.data, { httpMetadata: { contentType: img.type } });
+      await c.env.DB.prepare("UPDATE tracks SET art_key = ?, art_tried = 1, updated_at = ? WHERE id = ?").bind(key, Date.now(), r.id).run();
+      updated++;
+    } else {
+      await c.env.DB.prepare("UPDATE tracks SET art_tried = 1 WHERE id = ?").bind(r.id).run();
+    }
+  }
+  const left = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM tracks WHERE ${missing}`).bind(fam).first<{ n: number }>();
+  return c.json({ updated, remaining: left?.n ?? 0 });
+});
+
+/** Artist picture, fetched on first request and cached in R2 (an empty object remembers a miss). */
+app.get("/api/artist-art/:name", async (c) => {
+  const name = c.req.param("name").trim().slice(0, 100);
+  const slug = name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "");
+  if (!slug) return c.json({ error: "not found" }, 404);
+  const key = `families/${c.get("family").familyId}/artist/${slug}`;
+  let head = await c.env.MUSIC.head(key);
+  if (!head) {
+    const img = await findArtistImage(name).catch(() => null);
+    head = await c.env.MUSIC.put(key, img?.data ?? new ArrayBuffer(0), { httpMetadata: { contentType: img?.type ?? "application/octet-stream" } });
+  }
+  if (head.size === 0) return c.json({ error: "not found" }, 404);
+  return serveR2(c.env.MUSIC, key, c.req.raw, { "Cache-Control": "private, max-age=86400" });
 });
 
 app.get("/api/art/:id", async (c) => {

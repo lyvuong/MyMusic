@@ -37,7 +37,10 @@ ul { list-style: none; margin: 8px 0; padding: 0; }
 .drop.over { border-color: var(--accent); }
 .code { font-size: 1.4rem; letter-spacing: .15em; }
 .player { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line); padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); display: grid; gap: 4px; max-width: 900px; margin: 0 auto; }
-.player-title { display: flex; flex-direction: column; }
+.player-info { display: flex; align-items: center; gap: 10px; }
+.player-info .cover { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
+.player-info .artist { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; margin-left: auto; }
+.player-title { display: flex; flex-direction: column; min-width: 0; }
 .player-title span { color: var(--muted); font-size: .85rem; }
 .player-controls { display: flex; gap: 8px; justify-content: center; }
 .player-seek { display: flex; align-items: center; gap: 8px; font-size: .8rem; }

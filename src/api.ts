@@ -55,6 +55,7 @@ export const api = {
   savePlaylist: (p: { id: string; name: string; shared: boolean; trackIds: string[] }) =>
     call<void>("PUT", `/api/playlists/${p.id}`, { name: p.name, shared: p.shared, trackIds: p.trackIds }),
   deletePlaylist: (id: string) => call<void>("DELETE", `/api/playlists/${id}`),
+  fetchArt: () => call<{ updated: number; remaining: number }>("POST", "/api/art/fetch"),
   deleteTrack: (id: string) => call<void>("DELETE", `/api/tracks/${id}`),
 
   /** Resolves to true when the library already had an identical file, so nothing new was stored. */
@@ -67,7 +68,7 @@ export const api = {
   },
 
   /** URL for <audio>/<img>, which cannot send an Authorization header. */
-  async mediaUrl(kind: "stream" | "art", id: string): Promise<string> {
+  async mediaUrl(kind: "stream" | "art" | "artist-art", id: string): Promise<string> {
     return `/api/${kind}/${id}?access_token=${encodeURIComponent(await token())}`;
   },
 };

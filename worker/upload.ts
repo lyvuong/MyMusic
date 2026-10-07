@@ -1,4 +1,5 @@
 import { parseBuffer } from "music-metadata";
+import { findAlbumArt } from "./artwork";
 
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
 
@@ -20,18 +21,25 @@ export async function ingest(env: Env, familyId: string, file: File): Promise<{ 
   await env.MUSIC.put(key, buf, { httpMetadata: { contentType: mime } });
 
   let artKey: string | null = null;
-  const pic = common?.picture?.[0];
+  const title = common?.title || file.name.replace(/\.[^.]+$/, "");
+  let tried = 0;
+  let pic: { data: Uint8Array | ArrayBuffer; format: string } | undefined = common?.picture?.[0];
+  if (!pic) {
+    // No embedded cover: look one up online (best effort).
+    tried = 1;
+    const found = await findAlbumArt(common?.artist ?? "", common?.album ?? "", title).catch(() => null);
+    if (found) pic = { data: found.data, format: found.type };
+  }
   if (pic) {
     artKey = `families/${familyId}/art/${id}`;
     await env.MUSIC.put(artKey, pic.data, { httpMetadata: { contentType: pic.format } });
   }
-  const title = common?.title || file.name.replace(/\.[^.]+$/, "");
   await env.DB.prepare(
-    "INSERT INTO tracks (id, family_id, source, source_key, title, artist, album, duration, track_no, art_key, size, etag, mime, updated_at, content_hash) " +
-      "VALUES (?, ?, 'r2', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO tracks (id, family_id, source, source_key, title, artist, album, duration, track_no, art_key, size, etag, mime, updated_at, content_hash, art_tried) " +
+      "VALUES (?, ?, 'r2', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).bind(
     id, familyId, key, title, common?.artist ?? "", common?.album ?? "", meta?.format.duration ?? 0, common?.track.no ?? 0,
-    artKey, buf.byteLength, id, mime, Date.now(), hash,
+    artKey, buf.byteLength, id, mime, Date.now(), hash, tried,
   ).run();
   return { id, duplicate: false };
 }

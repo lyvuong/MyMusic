@@ -132,9 +132,31 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
     await refresh();
   };
 
+  const [artMsg, setArtMsg] = useState("");
+  const findCovers = async () => {
+    let found = 0;
+    try {
+      for (let left = 1; left > 0; ) {
+        setArtMsg(`Looking up covers… ${found} found`);
+        const r = await api.fetchArt();
+        found += r.updated;
+        left = r.remaining;
+      }
+      setArtMsg(`Done: ${found} new cover${found === 1 ? "" : "s"}.`);
+    } catch (e) {
+      setArtMsg(e instanceof Error ? e.message : "Cover lookup failed");
+    }
+    await refresh();
+  };
+
   return (
     <>
       <input className="search" placeholder="Search your music" value={q} onChange={(e) => setQ(e.target.value)} />
+      {tracks.some((t) => !t.hasArt) && (
+        <p className="muted">
+          Some songs have no cover. <button className="link" onClick={() => void findCovers()}>Find missing covers online</button> {artMsg}
+        </p>
+      )}
       {list.length === 0 ? (
         <p className="muted">No songs yet. Use the Upload tab to add some.</p>
       ) : (

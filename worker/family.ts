@@ -96,6 +96,9 @@ async function deleteFamily(env: Env, familyId: string) {
     .bind(familyId).all<{ source_key: string; art_key: string | null }>();
   const all = keys.results.flatMap((k) => (k.art_key ? [k.source_key, k.art_key] : [k.source_key]));
   for (let i = 0; i < all.length; i += 1000) await env.MUSIC.delete(all.slice(i, i + 1000));
+  // Cached artist pictures are not tied to a track row.
+  const artists = await env.MUSIC.list({ prefix: `families/${familyId}/artist/`, limit: 1000 });
+  if (artists.objects.length) await env.MUSIC.delete(artists.objects.map((o) => o.key));
   await env.DB.batch([
     env.DB.prepare("DELETE FROM playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE family_id = ?)").bind(familyId),
     env.DB.prepare("DELETE FROM playlists WHERE family_id = ?").bind(familyId),
