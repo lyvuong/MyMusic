@@ -8,3 +8,6 @@ dev-dist/
 key.properties
 *.jks
 service-account*.json
+dist-android/
+flutter/android/app/google-services.json
+.env.local

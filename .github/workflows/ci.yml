@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    name: Worker + web player
+    runs-on: ubuntu-24.04
+    env:
+      # Firebase web config is not secret; set these as repository variables.
+      VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+      VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+      VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+      VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 1
+
+  android:
+    name: Android app
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  deploy:
+    name: Deploy Worker + web player
+    # Every push to main that passes the checks goes live: D1 migrations first, then the Worker.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [web]
+    runs-on: ubuntu-24.04
+    concurrency: deploy
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Migrate database and deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler d1 migrations apply mymusic --remote
+          npx wrangler deploy
+
+  release-android:
+    name: Publish Android update
+    # Every push to main that passes the checks becomes an in-app update (and a GitHub release for first installs).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [web, android]
+    runs-on: ubuntu-24.04
+    concurrency: release-android
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the build number is the commit count
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Signing key and Firebase config
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=mymusic\nkeyPassword=%s\n' \
+            "$RUNNER_TEMP/release.jks" "$KEYSTORE_PASSWORD" "$KEYSTORE_PASSWORD" > flutter/android/key.properties
+          echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > flutter/android/app/google-services.json
+      - name: Fit Gradle in the runner memory
+        run: sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=512m/' flutter/android/gradle.properties
+      - name: Build, sign and publish to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run release:android
+      - name: GitHub release (APKs for the first, manual install)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v0.1.$(git rev-list --count HEAD)"
+          gh release create "$tag" dist-android/*.apk --title "MyMusic $tag" --notes "$(git log -1 --format=%s)"
