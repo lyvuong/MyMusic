@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
 import 'models.dart';
@@ -34,6 +35,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   AudioServiceRepeatMode _repeat = AudioServiceRepeatMode.none;
   int _gen = 0; // bumped on every load so a slow, superseded load is ignored
   int _failures = 0;
+
+  /// The last reason a track could not be loaded, for the UI to show (null when none).
+  final playError = ValueNotifier<String?>(null);
 
   Future<void> _init() async {
     final session = await AudioSession.instance;
@@ -139,8 +143,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       _failures = 0;
       app.markPlayed(track.id);
       unawaited(_player.play());
-    } catch (_) {
+    } catch (e) {
       if (gen != _gen) return;
+      playError.value = "Can't play \"${track.title}\": $e";
       // Not downloaded and no connection (or removed on the server): move on, but stop if the whole queue fails.
       if (++_failures < _order.length && pos + 1 < _order.length) {
         await _playPos(pos + 1);

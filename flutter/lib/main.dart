@@ -11,6 +11,8 @@ import 'ui/family_screen.dart';
 import 'ui/home.dart';
 import 'ui/sign_in.dart';
 
+final messengerKey = GlobalKey<ScaffoldMessengerState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Firebase reads google-services.json (Android) / GoogleService-Info.plist (iOS).
@@ -32,6 +34,10 @@ Future<void> main() async {
       androidNotificationIcon: 'drawable/ic_notification',
     ),
   );
+  audio.playError.addListener(() {
+    final msg = audio.playError.value;
+    if (msg != null) messengerKey.currentState?.showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 8)));
+  });
   runApp(AppScope(app: app, audio: audio, child: MyMusicApp(firebaseError: firebaseError)));
 }
 
@@ -42,6 +48,7 @@ class MyMusicApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      scaffoldMessengerKey: messengerKey,
       title: 'MyMusic',
       themeMode: ThemeMode.system,
       theme: ThemeData(colorSchemeSeed: Colors.deepPurple, useMaterial3: true),
