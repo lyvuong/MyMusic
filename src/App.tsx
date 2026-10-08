@@ -1,5 +1,5 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { BeetsRun, FamilyInfo, Playlist, Track } from "../shared/types";
 import { api } from "./api";
 import { ArtistPic, Cover } from "./art";
@@ -461,47 +461,80 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const when = (t: number) => new Date(t).toLocaleString();
 
 /** Owner tool: run Beets on the home server, then scan Navidrome and sync the library, showing the result. */
-function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
-  const [runs, setRuns] = useState<BeetsRun[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
+interface OrganizeState { busy: boolean; msg: string; runs: BeetsRun[] }
+let organizeState: OrganizeState = { busy: false, msg: "", runs: [] };
+const organizeSubs = new Set<() => void>();
+const setOrganize = (patch: Partial<OrganizeState>) => {
+  organizeState = { ...organizeState, ...patch };
+  organizeSubs.forEach((f) => f());
+};
+const watchOrganize = (f: () => void) => {
+  organizeSubs.add(f);
+  return () => void organizeSubs.delete(f);
+};
 
-  const load = useCallback(async () => {
-    try {
-      setRuns((await api.beetsRuns()).runs);
-    } catch {
-      /* shown on the next action */
+async function refreshRuns() {
+  try {
+    setOrganize({ runs: (await api.beetsRuns()).runs });
+  } catch {
+    /* shown on the next action */
+  }
+}
+
+/**
+ * Follows a Beets run to the end, then scans Navidrome and syncs the library. It lives outside the component so it keeps
+ * going when you leave the Family tab, and the tab picks it up again when you come back.
+ */
+async function followRun(first: BeetsRun, syncNas: () => Promise<boolean>) {
+  if (organizeState.busy) return;
+  setOrganize({ busy: true });
+  try {
+    let run = first;
+    const deadline = Date.now() + 40 * 60 * 1000;
+    while (run.status === "requested" || run.status === "running") {
+      if (Date.now() > deadline) throw new Error("Gave up waiting for the server. Check the Unraid script.");
+      setOrganize({ msg: run.status === "requested" ? "Waiting for the server to pick it up (up to a minute)…" : "Beets is importing…" });
+      await sleep(3000);
+      const { runs: latest } = await api.beetsRuns();
+      setOrganize({ runs: latest });
+      const next = latest.find((r) => r.id === run.id);
+      if (!next) throw new Error("The run disappeared from the history.");
+      run = next;
     }
+    if (run.status === "failed") throw new Error("Beets failed. See the log below.");
+    setOrganize({ msg: "Scanning Navidrome…" });
+    await api.scanNas();
+    await sleep(2000);
+    for (let i = 0; i < 200 && (await api.nasScanning()).scanning; i++) await sleep(3000);
+    setOrganize({ msg: "Syncing the library…" });
+    setOrganize({ msg: (await syncNas()) ? "Done: Beets ran, Navidrome scanned and the library synced." : "Beets ran, but the library sync failed." });
+  } catch (e) {
+    setOrganize({ msg: e instanceof Error ? e.message : "Failed" });
+  } finally {
+    setOrganize({ busy: false });
+    await refreshRuns();
+  }
+}
+
+function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
+  const { busy, msg, runs } = useSyncExternalStore(watchOrganize, () => organizeState);
+  const sync = useRef(syncNas);
+  sync.current = syncNas;
+
+  // Coming back to the tab while a run is still going: show it and keep following it.
+  useEffect(() => {
+    void (async () => {
+      await refreshRuns();
+      const open = organizeState.runs.find((r) => r.status === "requested" || r.status === "running");
+      if (open) void followRun(open, () => sync.current());
+    })();
   }, []);
-  useEffect(() => void load(), [load]);
 
   const organize = async () => {
-    setBusy(true);
     try {
-      let run = await api.runBeets();
-      const deadline = Date.now() + 40 * 60 * 1000;
-      while (run.status === "requested" || run.status === "running") {
-        if (Date.now() > deadline) throw new Error("Gave up waiting for the server. Check the Unraid script.");
-        setMsg(run.status === "requested" ? "Waiting for the server to pick it up (up to a minute)…" : "Beets is importing…");
-        await sleep(3000);
-        const { runs: latest } = await api.beetsRuns();
-        setRuns(latest);
-        const next = latest.find((r) => r.id === run.id);
-        if (!next) throw new Error("The run disappeared from the history.");
-        run = next;
-      }
-      if (run.status === "failed") throw new Error("Beets failed. See the log below.");
-      setMsg("Scanning Navidrome…");
-      await api.scanNas();
-      await sleep(2000);
-      for (let i = 0; i < 200 && (await api.nasScanning()).scanning; i++) await sleep(3000);
-      setMsg("Syncing the library…");
-      setMsg((await syncNas()) ? "Done: Beets ran, Navidrome scanned and the library synced." : "Beets ran, but the library sync failed.");
+      await followRun(await api.runBeets(), () => sync.current());
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setBusy(false);
-      await load();
+      setOrganize({ msg: e instanceof Error ? e.message : "Failed" });
     }
   };
 
@@ -509,7 +542,7 @@ function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
     <>
       <p>
         <button disabled={busy} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
-        <small className="muted">{msg}</small>
+        <small className="muted" role="status">{msg}</small>
       </p>
       {runs.length > 0 && (
         <details>
