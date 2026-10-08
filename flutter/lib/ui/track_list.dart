@@ -8,9 +8,10 @@ import 'widgets.dart';
 
 /// A fixed list of songs (an album or an artist).
 class TrackListPage extends StatelessWidget {
-  const TrackListPage({super.key, required this.title, required this.tracks});
+  const TrackListPage({super.key, required this.title, required this.tracks, this.cover});
   final String title;
   final List<Track> tracks;
+  final Track? cover; // shown large above the songs
 
   @override
   Widget build(BuildContext context) {
@@ -19,6 +20,18 @@ class TrackListPage extends StatelessWidget {
         IconButton(icon: const Icon(Icons.download_for_offline), tooltip: 'Download all', onPressed: () => context.app.downloadAll(tracks)),
       ]),
       body: Column(children: [
+        if (cover != null && cover!.hasArt && !cover!.isLocal)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Row(children: [
+              TrackArt(cover!, size: 120),
+              const SizedBox(width: 16),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleLarge),
+                Text('${tracks.length} songs', style: Theme.of(context).textTheme.bodyMedium),
+              ])),
+            ]),
+          ),
         Expanded(child: ListView.builder(itemCount: tracks.length, itemBuilder: (_, i) => TrackTile(track: tracks[i], queue: tracks))),
         const MiniPlayer(),
       ]),
