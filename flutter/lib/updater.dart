@@ -79,3 +79,62 @@ Stream<int> installUpdate(AppUpdate update) async* {
     }
   }
 }
+
+/// What the "new version" banner shows: whether a newer build exists, whether the user hid it, and
+/// the download progress. Checks run at start and whenever the app comes back to the foreground.
+class UpdateController extends ChangeNotifier {
+  UpdateController({Future<AppUpdate?> Function()? check, Stream<int> Function(AppUpdate)? install})
+      : _check = check ?? checkForUpdate,
+        _install = install ?? installUpdate;
+
+  final Future<AppUpdate?> Function() _check;
+  final Stream<int> Function(AppUpdate) _install;
+
+  AppUpdate? update;
+  int? progress; // 0-100 while downloading, null otherwise
+  String? error;
+  int _dismissed = 0; // version code the user chose "Later" for; a newer build shows the banner again
+  DateTime? _checkedAt;
+
+  bool get visible => update != null && (progress != null || update!.versionCode != _dismissed);
+
+  /// Quietly asks for the newest build; at most every 30 minutes unless [force]. Offline is fine.
+  Future<void> check({bool force = false}) async {
+    final last = _checkedAt;
+    if (progress != null || (!force && last != null && DateTime.now().difference(last) < const Duration(minutes: 30))) return;
+    _checkedAt = DateTime.now();
+    try {
+      final u = await _check();
+      if (u?.versionCode != update?.versionCode) {
+        update = u;
+        error = null;
+        notifyListeners();
+      }
+    } catch (_) {
+      _checkedAt = null; // try again next time
+    }
+  }
+
+  void dismiss() {
+    _dismissed = update?.versionCode ?? 0;
+    notifyListeners();
+  }
+
+  Future<void> install() async {
+    final u = update;
+    if (u == null || progress != null) return;
+    error = null;
+    progress = 0;
+    notifyListeners();
+    try {
+      await for (final p in _install(u)) {
+        progress = p;
+        notifyListeners();
+      }
+    } catch (e) {
+      error = e is StateError ? e.message : '$e';
+    }
+    progress = null;
+    notifyListeners();
+  }
+}
