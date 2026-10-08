@@ -101,8 +101,8 @@ class _LibraryPageState extends State<LibraryPage> {
             Expanded(
               child: TabBarView(children: [
                 _SongList(songs),
-                _GroupList(all, (t) => t.album, Icons.album),
-                _GroupList(all, (t) => t.artist, Icons.person),
+                _GroupList(all, (t) => t.album, grid: true),
+                _GroupList(all, (t) => t.artist),
               ]),
             ),
           ]);
@@ -132,10 +132,10 @@ class _SongList extends StatelessWidget {
 }
 
 class _GroupList extends StatelessWidget {
-  const _GroupList(this.all, this.key_, this.icon);
+  const _GroupList(this.all, this.key_, {this.grid = false});
   final List<Track> all;
   final String Function(Track) key_;
-  final IconData icon;
+  final bool grid;
 
   @override
   Widget build(BuildContext context) {
@@ -145,21 +145,47 @@ class _GroupList extends StatelessWidget {
       if (k.isNotEmpty) groups.putIfAbsent(k, () => []).add(t);
     }
     final names = groups.keys.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    void open(String n, List<Track> tracks) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => TrackListPage(title: n, tracks: tracks, cover: coverOf(tracks))));
+    if (grid) {
+      return GridView.builder(
+        padding: const EdgeInsets.all(12),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 200, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.78),
+        itemCount: names.length,
+        itemBuilder: (_, i) {
+          final n = names[i];
+          final tracks = groups[n]!..sort((a, b) => a.trackNo.compareTo(b.trackNo));
+          return InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => open(n, tracks),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(child: LayoutBuilder(builder: (_, c) => TrackArt(coverOf(tracks), size: c.maxWidth))),
+              const SizedBox(height: 6),
+              Text(n, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text(tracks.map((t) => t.artist).where((a) => a.isNotEmpty).toSet().length == 1 ? tracks.first.artist : '${tracks.length} songs',
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+            ]),
+          );
+        },
+      );
+    }
     return ListView.builder(
       itemCount: names.length,
       itemBuilder: (_, i) {
         final n = names[i];
         final tracks = groups[n]!..sort((a, b) => a.trackNo.compareTo(b.trackNo));
         return ListTile(
-          leading: Icon(icon),
+          leading: TrackArt(coverOf(tracks), size: 44),
           title: Text(n),
           subtitle: Text('${tracks.length} songs'),
-          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => TrackListPage(title: n, tracks: tracks))),
+          onTap: () => open(n, tracks),
         );
       },
     );
   }
 }
+
+/// The song whose cover stands for a group: the first one that has art, else the first song (shows the placeholder).
+Track coverOf(List<Track> tracks) => tracks.firstWhere((t) => t.hasArt && !t.isLocal, orElse: () => tracks.first);
 
 class PlaylistsPage extends StatelessWidget {
   const PlaylistsPage({super.key});
