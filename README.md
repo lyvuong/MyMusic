@@ -57,13 +57,13 @@ Flow: drop files in `/mnt/user/Music/_inbox` (File Browser) -> Beets organizes t
 - Later clean-up: `beet import -L [query]` re-matches albums already in the library; after retagging run `beet update` then `beet move`. Rescan Navidrome and re-sync the app afterwards.
 
 ### Compose stack
-One `compose.yaml` runs four containers: `navidrome`, `filebrowser`, `beets`, `picard` (all `restart: unless-stopped`, all `:latest` images). Beets runs as root (`PUID=0`, `PGID=0`, `TZ=America/New_York`) like File Browser, so it can write to files File Browser uploaded.
+One `compose.yaml` runs three containers: `navidrome`, `filebrowser`, `beets` (all `restart: unless-stopped`, all `:latest` images). Beets runs as root (`PUID=0`, `PGID=0`, `TZ=America/New_York`) like File Browser, so it can write to files File Browser uploaded.
 
 ### Fixes applied to the server (Oct 8, 2026) and troubleshooting
 1. **Nothing was organized**: `config.yaml` had `quiet_fallback: skip`, so the scheduled `-q` import silently skipped every album beets could not confidently match. Changed to `quiet_fallback: asis` and `resume: ask` -> `resume: no` (a scheduled job cannot answer prompts). Backup of the old file: `config.yaml.bak`.
 2. **Scheduled runs "finished" in 0 seconds**: the first import (started with the old config) was still running and held `/tmp/beets-import.lock`, so `flock -n` skipped every later run. Fixed with `docker restart beets` and running the script again. Beets reads `config.yaml` only at start, so always restart the container (or wait for the running import) after editing it.
 3. **Slow imports**: MusicBrainz is rate limited (~1 request/s) and `fetchart`/`lastgenre` add a lookup per album. Optional speed-up while sorting a big inbox: `plugins: musicbrainz scrub`.
-4. **Albums with junk tags** (`05. Track 5.mp3`, `- Unknown 2 -.mp3`, many Vietnamese songs) import as-is. Fix them later by retagging (Picard/Mp3tag or `beet modify`), then `beet import -L`, `beet update`, `beet move`.
+4. **Albums with junk tags** (`05. Track 5.mp3`, `- Unknown 2 -.mp3`, many Vietnamese songs) import as-is. Fix them later by retagging (Mp3tag or `beet modify`), then `beet import -L`, `beet update`, `beet move`.
 5. **Grayed-out album with "?"**: Navidrome missing files; see the Navidrome section below.
 6. **Untagged files stay in `_inbox` ("This album is already in the library! Skipping.")**: songs with no tags all have a blank artist and album, so after the first as-is import every other one looks like a duplicate of it. They are not real duplicates (checked by checksum). Fix: add the `fromfilename` plugin (title from the file name) and import them as singletons: `beet import -s -q /downloads`. The `singleton` path is `Non-Album/%if{$artist,$artist - }$title` so a missing artist does not give ` - Title.mp3`. The skip reasons are in the log written by `-l /config/skipped.log`.
 7. **Tags cannot be written over SMB (Mp3tag "cannot write")**: Beets runs as root, so imported files are `root:root` with `rw-r-----` and the SMB user `nobody` cannot write them. Fix: `chown -R nobody:users /mnt/user/Music && chmod -R u+rwX,g+rwX,o+rX /mnt/user/Music` (the same as Tools -> New Permissions), only while no import is running. To stop it coming back, set `PUID=99` and `PGID=100` on the `beets` service. In Mp3tag use ID3v2.3 with UTF-16 so Vietnamese text reads correctly everywhere.
@@ -96,10 +96,10 @@ Afterwards press **Organize inbox and update library** in the web app (Navidrome
 - The Worker reaches it through a Cloudflare Tunnel (`NAS_BASE_URL`, optional Cloudflare Access service token `NAS_CF_ACCESS_*`; tunnel hostname not recorded here).
 - Albums grayed out with a "?" are Navidrome's missing-files marker (files gone from disk). Remove them under user menu -> Missing Files (0.55+), then rescan.
 
-### Picard (container `picard`, image `jlesage/musicbrainz-picard:latest`)
-- Web tag editor for fixing MP3 tags (e.g. Vietnamese titles) in a browser; File Browser cannot edit tags. Web UI on port `5800` (`http://Lincoln-Unraid:5800`), LAN only, no login: do not put it behind the Cloudflare Tunnel.
-- Compose entry: `USER_ID=0`, `GROUP_ID=0`, `TZ=America/New_York`, volumes `/mnt/user/appdata/picard` -> `/config` and `/mnt/user/Music` -> `/storage` (writable). Start only this service with `docker compose up -d picard`.
-- Workflow: Add Files/Folder from `/storage`, **Scan** (audio fingerprint) or **Lookup**, edit fields, **Save**. Then `docker exec beets beet update` and `beet move`, rescan Navidrome, re-sync the app. Do not edit while a beets import is running. Alternatives: Mp3tag over the `\\Lincoln-Unraid\Music` SMB share, or `beet modify` / `beet edit`.
+### Editing tags (Mp3tag on the laptop)
+- Tags are edited with Mp3tag on Windows over the SMB share `\\Lincoln-Unraid\Music` (File Browser cannot edit tags). Picard was tried and dropped: its web UI cannot type Vietnamese. It is no longer in the compose stack.
+- Mp3tag: Tools -> Options -> Tags -> Mpeg, write **ID3v2.3 with UTF-16** so Vietnamese reads correctly in Navidrome and on Android. Writing needs the files to be writable by `nobody` (see troubleshooting item 7 above).
+- After editing: `docker exec beets beet update` (re-reads tags), `beet move` if the names changed, then press **Organize** in the web app. Do not edit while a Beets import is running. Quick fixes without a laptop: `beet modify` / `beet edit`.
 
 ### File Browser (container `filebrowser`, image `filebrowser/filebrowser:latest`)
 - Port `8080` -> container `80`. Runs as `user: "0:0"` to bypass Unraid permission lockouts; healthcheck disabled.
@@ -117,7 +117,7 @@ One-time setup:
 4. The Navidrome user in `NAS_USER` must be an **admin**, or "start scan" is refused and the button stops after Beets finishes.
 5. Push to `main`: CI applies migration `0005_beets_runs.sql` and deploys the Worker and web app.
 
-Notes: the agent shares `/tmp/beets-import.lock` with the 15-minute scheduled import, so the two never overlap; the agent takes only one run at a time. A run that never reports back (server or script died) is marked failed after 2 hours. Imports are quiet (`-q`) and cannot ask questions; anything that needs a human choice still goes through Picard or `beet import -L` in a terminal. The agent endpoints (`/api/beets/agent/*`) skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
+Notes: the agent shares `/tmp/beets-import.lock` with the 15-minute scheduled import, so the two never overlap; the agent takes only one run at a time. A run that never reports back (server or script died) is marked failed after 2 hours. Imports are quiet (`-q`) and cannot ask questions; anything that needs a human choice still goes through Mp3tag or `beet import -L` in a terminal. The agent endpoints (`/api/beets/agent/*`) skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
 
 ## Local development
 
