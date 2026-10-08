@@ -1,5 +1,5 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BeetsRun, FamilyInfo, Playlist, Track } from "../shared/types";
 import { api } from "./api";
 import { ArtistPic, Cover } from "./art";
@@ -106,13 +106,14 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
   );
 }
 
-function TrackRow({ t, queue, extra, number, hideArtist }: { t: Track; queue: Track[]; extra?: React.ReactNode; number?: number; hideArtist?: boolean }) {
+function TrackRow({ t, queue, extra, number, hideArtist, select }: { t: Track; queue: Track[]; extra?: React.ReactNode; number?: number; hideArtist?: boolean; select?: { picked: boolean; toggle: () => void } }) {
   const p = usePlayer();
   const active = p.current?.id === t.id;
   const mins = Math.floor(t.duration / 60);
   return (
-    <li className={active ? "row active" : "row"}>
-      <button className="lead" onClick={() => p.play(queue, queue.findIndex((x) => x.id === t.id))} aria-label={`Play ${t.title}`}>
+    <li className={`row${active ? " active" : ""}${select?.picked ? " picked" : ""}`} onClick={select?.toggle}>
+      {select && <input className="pick" type="checkbox" checked={select.picked} onChange={select.toggle} onClick={(e) => e.stopPropagation()} aria-label={`Select ${t.title}`} />}
+      <button className="lead" onClick={select ? undefined : () => p.play(queue, queue.findIndex((x) => x.id === t.id))} aria-label={`Play ${t.title}`}>
         {number === undefined ? <Cover track={t} seed={t.album || t.title} className="sm" /> : <span className="num">{number || "–"}</span>}
         <span className="badge">{active && p.playing ? "♪" : "▶"}</span>
       </button>
@@ -141,11 +142,92 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
   const detailArtist = useMemo(() => (open?.kind === "artist" ? groupArtists(tracks).find((a) => a.name === open.key) : undefined), [tracks, open]);
   const mine = playlists.filter((p) => p.ownerUid === uid);
 
-  const addTo = async (pl: Playlist, t: Track) => {
-    if (pl.trackIds.includes(t.id)) return;
-    await api.savePlaylist({ ...pl, trackIds: [...pl.trackIds, t.id] });
-    await refresh();
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const stopSelecting = () => {
+    setSelecting(false);
+    setPicked(new Set());
   };
+  useEffect(stopSelecting, [view, open]);
+  const toggle = (id: string) =>
+    setPicked((old) => {
+      const n = new Set(old);
+      if (!n.delete(id)) n.add(id);
+      return n;
+    });
+
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<number>(0);
+  const flash = (m: string) => {
+    setToast(m);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), 3000);
+  };
+  const toastEl = toast ? <div className={selecting ? "toast high" : "toast"} role="status">{toast}</div> : null;
+
+  const what = (ts: Track[]) => (ts.length === 1 ? `"${ts[0]!.title}"` : `${ts.length} songs`);
+
+  /** Adds songs to one of your playlists, skipping ones already in it. Returns whether anything was added. */
+  const addMany = async (pl: Playlist, ts: Track[]): Promise<boolean> => {
+    const fresh = ts.filter((t) => !pl.trackIds.includes(t.id));
+    if (fresh.length === 0) {
+      flash(ts.length === 1 ? `${what(ts)} is already in ${pl.name}` : `Already in ${pl.name}`);
+      return false;
+    }
+    try {
+      await api.savePlaylist({ ...pl, trackIds: [...pl.trackIds, ...fresh.map((t) => t.id)] });
+      await refresh();
+      flash(`Added ${what(fresh)} to ${pl.name}`);
+      return true;
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Could not add to the playlist");
+      return false;
+    }
+  };
+
+  /** Asks for a name, then creates a playlist holding the songs. */
+  const createWith = async (ts: Track[]): Promise<boolean> => {
+    const name = prompt("Name for the new playlist")?.trim();
+    if (!name) return false;
+    try {
+      await api.savePlaylist({ id: crypto.randomUUID(), name, shared: false, trackIds: ts.map((t) => t.id) });
+      await refresh();
+      flash(`Created ${name} with ${what(ts)}`);
+      return true;
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Could not create the playlist");
+      return false;
+    }
+  };
+
+  /** Bar above the player while picking songs: how many, select all, add to a playlist, done. */
+  const selectBar = (visible: Track[]) => {
+    if (!selecting) return null;
+    const chosen = visible.filter((t) => picked.has(t.id));
+    return (
+      <div className="selectbar" role="toolbar" aria-label="Selected songs">
+        <strong>{chosen.length} selected</strong>
+        <button className="link" onClick={() => setPicked(new Set(visible.map((t) => t.id)))}>All</button>
+        <select
+          value=""
+          disabled={chosen.length === 0}
+          aria-label="Add the selected songs to a playlist"
+          onChange={async (e) => {
+            const v = e.target.value;
+            const pl = mine.find((p) => p.id === v);
+            if (v === "new" ? await createWith(chosen) : pl ? await addMany(pl, chosen) : false) stopSelecting();
+          }}
+        >
+          <option value="">Add to…</option>
+          <option value="new">＋ New playlist…</option>
+          {mine.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <button onClick={stopSelecting}>Done</button>
+      </div>
+    );
+  };
+  const selectLink = !selecting && <button className="link" onClick={() => setSelecting(true)}>Select</button>;
+  const rowSelect = (t: Track) => (selecting ? { picked: picked.has(t.id), toggle: () => toggle(t.id) } : undefined);
 
   const [artMsg, setArtMsg] = useState("");
   const findCovers = async () => {
@@ -171,9 +253,11 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
       aria-label={`More actions for ${t.title}`}
       onChange={async (e) => {
         const v = e.target.value;
-        if (v.startsWith("pl:")) {
+        if (v === "new") {
+          await createWith([t]);
+        } else if (v.startsWith("pl:")) {
           const pl = mine.find((p) => p.id === v.slice(3));
-          if (pl) await addTo(pl, t);
+          if (pl) await addMany(pl, [t]);
         } else if (v === "del" && confirm(`Delete "${t.title}" for the whole family?`)) {
           await api.deleteTrack(t.id);
           await refresh();
@@ -181,7 +265,8 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
       }}
     >
       <option value="">⋯</option>
-      {mine.map((p) => <option key={p.id} value={`pl:${p.id}`}>Add to {p.name}</option>)}
+      <option value="new">＋ New playlist…</option>
+      {mine.map((p) => <option key={p.id} value={`pl:${p.id}`}>{p.trackIds.includes(t.id) ? "✓ In" : "Add to"} {p.name}</option>)}
       <option value="del">Delete song…</option>
     </select>
   );
@@ -196,8 +281,14 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
         ) : (
           <Hero cover={<ArtistPic name={detailArtist!.name} className="lg" />} title={detailArtist!.name} subtitle="Artist" tracks={list} onBack={back} />
         )}
+        {toastEl}
+        {selectBar(list)}
+        <p className="muted">{songCount(list.length)} {selectLink}</p>
         <ul>
-          {list.map((t) => <TrackRow key={t.id} t={t} queue={list} number={detailAlbum ? t.trackNo : undefined} hideArtist={!!detailAlbum && detailAlbum.artist !== "Various artists"} extra={rowExtra(t)} />)}
+          {list.map((t) => (
+            <TrackRow key={t.id} t={t} queue={list} number={detailAlbum ? t.trackNo : undefined} hideArtist={!!detailAlbum && detailAlbum.artist !== "Various artists"}
+              extra={selecting ? undefined : rowExtra(t)} select={rowSelect(t)} />
+          ))}
         </ul>
       </>
     );
@@ -206,6 +297,7 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
   const views: [View, string][] = [["albums", "Albums"], ["artists", "Artists"], ["songs", "Songs"]];
   return (
     <>
+      {toastEl}
       <input className="search" placeholder="Search your music" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="seg" role="tablist">
         {views.map(([k, label]) => (
@@ -244,9 +336,10 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
         </>
       ) : (
         <>
-          <p className="muted">{songCount(songs.length)}</p>
+          {selectBar(songs)}
+          <p className="muted">{songCount(songs.length)} {selectLink}</p>
           <ul>
-            {songs.map((t) => <TrackRow key={t.id} t={t} queue={songs} extra={rowExtra(t)} />)}
+            {songs.map((t) => <TrackRow key={t.id} t={t} queue={songs} extra={selecting ? undefined : rowExtra(t)} select={rowSelect(t)} />)}
           </ul>
         </>
       )}
