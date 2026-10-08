@@ -101,8 +101,8 @@ class _LibraryPageState extends State<LibraryPage> {
             Expanded(
               child: TabBarView(children: [
                 _SongList(songs),
-                _GroupList(all, (t) => t.album, grid: true),
-                _GroupList(all, (t) => t.artist),
+                _GroupList(songs, (t) => t.album, grid: true),
+                _GroupList(songs, (t) => t.artist),
               ]),
             ),
           ]);
