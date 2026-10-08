@@ -12,8 +12,8 @@ export default defineConfig({
         name: "MyMusic",
         short_name: "MyMusic",
         description: "Your family's music library",
-        theme_color: "#4527a0",
-        background_color: "#121212",
+        theme_color: "#14110d",
+        background_color: "#14110d",
         display: "standalone",
         icons: [
           { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },

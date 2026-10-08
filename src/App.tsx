@@ -2,6 +2,8 @@ import { onAuthStateChanged, type User } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BeetsRun, FamilyInfo, Playlist, Track } from "../shared/types";
 import { api } from "./api";
+import { ArtistPic, Cover } from "./art";
+import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } from "./browse";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
 import { useLibrary } from "./useLibrary";
@@ -47,8 +49,9 @@ function SignIn() {
   const [err, setErr] = useState("");
   return (
     <Center>
+      <img className="logo big" src="/icon-192.png" alt="" />
       <h1>MyMusic</h1>
-      <p>Your family&apos;s music, anywhere.</p>
+      <p className="muted">Your family&apos;s music, anywhere.</p>
       <button className="primary" onClick={() => signInWithGoogle().catch((e: Error) => setErr(e.message))}>Continue with Google</button>
       {err && <p className="error">{err}</p>}
     </Center>
@@ -86,7 +89,7 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
   return (
     <div className="shell">
       <header>
-        <h1>MyMusic <small>{family.name}</small></h1>
+        <h1><img className="logo" src="/icon-192.png" alt="" /> MyMusic <small>{family.name}</small></h1>
         <nav>
           {tabs.map(([k, label]) => (
             <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{label}</button>
@@ -103,26 +106,39 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
   );
 }
 
-function TrackRow({ t, queue, extra }: { t: Track; queue: Track[]; extra?: React.ReactNode }) {
+function TrackRow({ t, queue, extra, number, hideArtist }: { t: Track; queue: Track[]; extra?: React.ReactNode; number?: number; hideArtist?: boolean }) {
   const p = usePlayer();
   const active = p.current?.id === t.id;
+  const mins = Math.floor(t.duration / 60);
   return (
     <li className={active ? "row active" : "row"}>
-      <button className="play" onClick={() => p.play(queue, queue.findIndex((x) => x.id === t.id))}>{active && p.playing ? "♪" : "▶"}</button>
-      <span className="grow"><strong>{t.title}</strong><small>{[t.artist, t.album].filter(Boolean).join(" · ")}</small></span>
+      <button className="lead" onClick={() => p.play(queue, queue.findIndex((x) => x.id === t.id))} aria-label={`Play ${t.title}`}>
+        {number === undefined ? <Cover track={t} seed={t.album || t.title} className="sm" /> : <span className="num">{number || "–"}</span>}
+        <span className="badge">{active && p.playing ? "♪" : "▶"}</span>
+      </button>
+      <span className="grow"><strong>{t.title}</strong><small>{[hideArtist ? "" : t.artist, number === undefined ? t.album : ""].filter(Boolean).join(" · ")}</small></span>
+      {t.duration > 0 && <small className="dur">{mins}:{String(Math.floor(t.duration % 60)).padStart(2, "0")}</small>}
       {extra}
     </li>
   );
 }
 
+type View = "albums" | "artists" | "songs";
+
 function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlists: Playlist[]; uid: string; refresh: () => Promise<void> }) {
   const [q, setQ] = useState("");
-  const list = useMemo(() => {
+  const [view, setView] = useState<View>("albums");
+  const [open, setOpen] = useState<{ kind: "album" | "artist"; key: string } | null>(null);
+  const filtered = useMemo(() => {
     const s = q.toLowerCase();
-    return tracks
-      .filter((t) => !s || `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(s))
-      .sort((a, b) => a.title.localeCompare(b.title));
+    return tracks.filter((t) => !s || `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(s));
   }, [tracks, q]);
+  const songs = useMemo(() => [...filtered].sort((a, b) => a.title.localeCompare(b.title)), [filtered]);
+  const albums = useMemo(() => groupAlbums(filtered), [filtered]);
+  const artists = useMemo(() => groupArtists(filtered), [filtered]);
+  const recent = useMemo(() => [...albums].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12), [albums]);
+  const detailAlbum = useMemo(() => (open?.kind === "album" ? groupAlbums(tracks).find((a) => a.key === open.key) : undefined), [tracks, open]);
+  const detailArtist = useMemo(() => (open?.kind === "artist" ? groupArtists(tracks).find((a) => a.name === open.key) : undefined), [tracks, open]);
   const mine = playlists.filter((p) => p.ownerUid === uid);
 
   const addTo = async (pl: Playlist, t: Track) => {
@@ -148,37 +164,91 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
     await refresh();
   };
 
+  const rowExtra = (t: Track) => (
+    <select
+      className="more"
+      value=""
+      aria-label={`More actions for ${t.title}`}
+      onChange={async (e) => {
+        const v = e.target.value;
+        if (v.startsWith("pl:")) {
+          const pl = mine.find((p) => p.id === v.slice(3));
+          if (pl) await addTo(pl, t);
+        } else if (v === "del" && confirm(`Delete "${t.title}" for the whole family?`)) {
+          await api.deleteTrack(t.id);
+          await refresh();
+        }
+      }}
+    >
+      <option value="">⋯</option>
+      {mine.map((p) => <option key={p.id} value={`pl:${p.id}`}>Add to {p.name}</option>)}
+      <option value="del">Delete song…</option>
+    </select>
+  );
+
+  if (detailAlbum || detailArtist) {
+    const back = () => setOpen(null);
+    const list = detailAlbum?.tracks ?? detailArtist!.tracks;
+    return (
+      <>
+        {detailAlbum ? (
+          <Hero cover={<Cover track={detailAlbum.art} seed={detailAlbum.name} className="lg" />} title={detailAlbum.name} subtitle={detailAlbum.artist} tracks={list} onBack={back} />
+        ) : (
+          <Hero cover={<ArtistPic name={detailArtist!.name} className="lg" />} title={detailArtist!.name} subtitle="Artist" tracks={list} onBack={back} />
+        )}
+        <ul>
+          {list.map((t) => <TrackRow key={t.id} t={t} queue={list} number={detailAlbum ? t.trackNo : undefined} hideArtist={!!detailAlbum && detailAlbum.artist !== "Various artists"} extra={rowExtra(t)} />)}
+        </ul>
+      </>
+    );
+  }
+
+  const views: [View, string][] = [["albums", "Albums"], ["artists", "Artists"], ["songs", "Songs"]];
   return (
     <>
       <input className="search" placeholder="Search your music" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="seg" role="tablist">
+        {views.map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={view === k} className={view === k ? "active" : ""} onClick={() => setView(k)}>{label}</button>
+        ))}
+      </div>
       {tracks.some((t) => !t.hasArt && t.source === "r2") && (
         <p className="muted">
           Some songs have no cover. <button className="link" onClick={() => void findCovers()}>Find missing covers online</button> {artMsg}
         </p>
       )}
-      {list.length === 0 ? (
+      {tracks.length === 0 ? (
         <p className="muted">No songs yet. Add music to your NAS, then run "Sync music from NAS" in the Family tab.</p>
+      ) : view === "albums" ? (
+        <>
+          {!q && recent.length > 1 && (
+            <section>
+              <h3>Recently added</h3>
+              <div className="strip">
+                {recent.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => setOpen({ kind: "album", key: a.key })} />)}
+              </div>
+              <h3>All albums <small>{albums.length}</small></h3>
+            </section>
+          )}
+          <div className="grid">
+            {albums.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => setOpen({ kind: "album", key: a.key })} />)}
+          </div>
+          {albums.length === 0 && <p className="muted">No albums match.</p>}
+        </>
+      ) : view === "artists" ? (
+        <>
+          <div className="grid">
+            {artists.map((a) => <ArtistCard key={a.name} artist={a} onOpen={() => setOpen({ kind: "artist", key: a.name })} />)}
+          </div>
+          {artists.length === 0 && <p className="muted">No artists match.</p>}
+        </>
       ) : (
-        <ul>
-          {list.map((t) => (
-            <TrackRow
-              key={t.id}
-              t={t}
-              queue={list}
-              extra={
-                <>
-                  {mine.length > 0 && (
-                    <select value="" onChange={(e) => { const pl = mine.find((p) => p.id === e.target.value); if (pl) void addTo(pl, t); }} aria-label="Add to playlist">
-                      <option value="">＋ Playlist</option>
-                      {mine.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  )}
-                  <button className="link danger" onClick={async () => { if (confirm(`Delete "${t.title}" for the whole family?`)) { await api.deleteTrack(t.id); await refresh(); } }}>Delete</button>
-                </>
-              }
-            />
-          ))}
-        </ul>
+        <>
+          <p className="muted">{songCount(songs.length)}</p>
+          <ul>
+            {songs.map((t) => <TrackRow key={t.id} t={t} queue={songs} extra={rowExtra(t)} />)}
+          </ul>
+        </>
       )}
     </>
   );
@@ -226,6 +296,7 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
       <ul>
         {pls.map((p) => (
           <li key={p.id} className="row">
+            <Cover track={p.trackIds.map((id) => lib.tracks.get(id)).find((t) => t?.hasArt)} seed={p.name} className="sm" />
             <button className="grow left" onClick={() => setOpenId(p.id)}>
               <strong>{p.name}</strong><small>{p.trackIds.length} songs{p.shared ? " · shared" : ""}{p.ownerUid === uid ? "" : " · from a family member"}</small>
             </button>

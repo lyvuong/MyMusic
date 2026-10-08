@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Track } from "../shared/types";
 import { api } from "./api";
+import { ArtistPic, Cover } from "./art";
 
 interface PlayerValue {
   current: Track | null;
@@ -108,42 +109,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/** Resolves a token-bearing media URL for an id; null until ready or when there is none. */
-function useMediaUrl(kind: "art" | "artist-art", id: string | null) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    setUrl(null);
-    if (id) void api.mediaUrl(kind, id).then(setUrl);
-  }, [kind, id]);
-  return url;
-}
-
 export function PlayerBar() {
   const p = usePlayer();
-  const art = useMediaUrl("art", p.current?.hasArt ? p.current.id : null);
-  const artist = useMediaUrl("artist-art", p.current?.artist ? encodeURIComponent(p.current.artist) : null);
   if (!p.current) return null;
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   return (
     <footer className="player">
       <div className="player-info">
-        {art && <img className="cover" src={art} alt="" onError={(e) => { e.currentTarget.hidden = true; }} />}
+        <Cover track={p.current} seed={p.current.album || p.current.title} className="md" />
         <div className="player-title">
           <strong>{p.current.title}</strong>
-          <span>{p.current.artist}</span>
+          <span>{[p.current.artist, p.current.album].filter(Boolean).join(" · ")}</span>
         </div>
-        {artist && <img className="artist" src={artist} alt="" onError={(e) => { e.currentTarget.hidden = true; }} />}
       </div>
-      <div className="player-controls">
-        <button onClick={p.prev} aria-label="Previous">⏮</button>
-        <button onClick={p.toggle} aria-label={p.playing ? "Pause" : "Play"}>{p.playing ? "⏸" : "▶"}</button>
-        <button onClick={p.next} aria-label="Next">⏭</button>
+      <div className="player-mid">
+        <div className="player-controls">
+          <button onClick={p.prev} aria-label="Previous">⏮</button>
+          <button className="primary big" onClick={p.toggle} aria-label={p.playing ? "Pause" : "Play"}>{p.playing ? "⏸" : "▶"}</button>
+          <button onClick={p.next} aria-label="Next">⏭</button>
+        </div>
+        <div className="player-seek">
+          <span>{fmt(p.position)}</span>
+          <input type="range" min={0} max={p.duration || 1} step={1} value={Math.min(p.position, p.duration || 1)} onChange={(e) => p.seek(Number(e.target.value))} />
+          <span>{fmt(p.duration || 0)}</span>
+        </div>
       </div>
-      <div className="player-seek">
-        <span>{fmt(p.position)}</span>
-        <input type="range" min={0} max={p.duration || 1} step={1} value={Math.min(p.position, p.duration || 1)} onChange={(e) => p.seek(Number(e.target.value))} />
-        <span>{fmt(p.duration || 0)}</span>
-      </div>
+      {p.current.artist && <ArtistPic name={p.current.artist} className="xs" />}
     </footer>
   );
 }
