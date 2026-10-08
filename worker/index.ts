@@ -3,6 +3,7 @@ import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
 import { findAlbumArt, findArtistImage } from "./artwork";
 import { delta, savePlaylist } from "./library";
+import { nasEnabled, proxyCover, proxyStream, syncPage } from "./nas";
 import { ingest } from "./upload";
 
 type Vars = { user: User; family: Membership };
@@ -32,7 +33,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/family/invites"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/family/invites"]) {
   app.use(p, needFamily);
 }
 
@@ -149,7 +150,20 @@ app.get("/api/stream/:id", async (c) => {
     .bind(c.req.param("id"), c.get("family").familyId).first<{ source: string; source_key: string }>();
   if (!row) return c.json({ error: "not found" }, 404);
   if (row.source === "r2") return serveR2(c.env.MUSIC, row.source_key, c.req.raw);
-  return c.json({ error: "nas not configured" }, 501); // NAS proxy: build step 5
+  if (!nasEnabled(c.env)) return c.json({ error: "nas not configured" }, 501);
+  return proxyStream(c.env, row.source_key, c.req.raw);
+});
+
+/** Imports the NAS library page by page (owner only); the client repeats with `next` until `done`. */
+app.post("/api/nas/sync", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  if (!nasEnabled(c.env)) return c.json({ error: "NAS is not configured" }, 501);
+  const { offset, run } = await c.req.json<{ offset?: number; run?: number }>();
+  try {
+    return c.json(await syncPage(c.env, c.get("family").familyId, Math.max(0, Number(offset) || 0), Number(run) || Date.now()));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "NAS sync failed" }, 502);
+  }
 });
 
 /** Looks up missing album covers online for up to 10 tracks per call; the client repeats until `remaining` is 0. */
@@ -193,6 +207,7 @@ app.get("/api/art/:id", async (c) => {
   const row = await c.env.DB.prepare("SELECT art_key FROM tracks WHERE id = ? AND family_id = ?")
     .bind(c.req.param("id"), c.get("family").familyId).first<{ art_key: string | null }>();
   if (!row?.art_key) return c.json({ error: "not found" }, 404);
+  if (row.art_key.startsWith("nas:")) return nasEnabled(c.env) ? proxyCover(c.env, row.art_key.slice(4)) : c.json({ error: "not found" }, 404);
   return serveR2(c.env.MUSIC, row.art_key, c.req.raw, { "Cache-Control": "private, max-age=86400" });
 });
 

@@ -97,7 +97,7 @@ class _SongList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (songs.isEmpty) {
-      return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('No songs yet. Upload music on the web player, or add music from this phone in Settings.', textAlign: TextAlign.center)));
+      return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('No songs yet. Ask the family owner to sync the NAS in the web player, or add music from this phone in Settings.', textAlign: TextAlign.center)));
     }
     return RefreshIndicator(
       onRefresh: context.app.sync,

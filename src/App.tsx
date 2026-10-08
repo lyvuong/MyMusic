@@ -6,7 +6,7 @@ import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase"
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
 import { useLibrary } from "./useLibrary";
 
-type Tab = "library" | "playlists" | "upload" | "family";
+type Tab = "library" | "playlists" | "family";
 
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = still loading
@@ -82,7 +82,7 @@ function FamilySetup({ onDone }: { onDone: (f: FamilyInfo) => void }) {
 function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo; reloadFamily: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("library");
   const lib = useLibrary(true);
-  const tabs: [Tab, string][] = [["library", "Library"], ["playlists", "Playlists"], ["upload", "Upload"], ["family", "Family"]];
+  const tabs: [Tab, string][] = [["library", "Library"], ["playlists", "Playlists"], ["family", "Family"]];
   return (
     <div className="shell">
       <header>
@@ -96,8 +96,7 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
       <main>
         {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} />}
         {tab === "playlists" && <Playlists lib={lib} uid={user.uid} />}
-        {tab === "upload" && <Upload onDone={lib.refresh} />}
-        {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} />}
+        {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} refresh={lib.refresh} />}
       </main>
       <PlayerBar />
     </div>
@@ -152,13 +151,13 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
   return (
     <>
       <input className="search" placeholder="Search your music" value={q} onChange={(e) => setQ(e.target.value)} />
-      {tracks.some((t) => !t.hasArt) && (
+      {tracks.some((t) => !t.hasArt && t.source === "r2") && (
         <p className="muted">
           Some songs have no cover. <button className="link" onClick={() => void findCovers()}>Find missing covers online</button> {artMsg}
         </p>
       )}
       {list.length === 0 ? (
-        <p className="muted">No songs yet. Use the Upload tab to add some.</p>
+        <p className="muted">No songs yet. Add music to your NAS, then run "Sync music from NAS" in the Family tab.</p>
       ) : (
         <ul>
           {list.map((t) => (
@@ -238,46 +237,27 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
   );
 }
 
-function Upload({ onDone }: { onDone: () => Promise<void> }) {
-  const [items, setItems] = useState<{ name: string; state: "waiting" | "uploading" | "done" | string }[]>([]);
-  const [over, setOver] = useState(false);
-
-  const start = async (files: File[]) => {
-    const audio = files.filter((f) => f.type.startsWith("audio/") || /\.(mp3|m4a|aac|flac|ogg|opus|wav)$/i.test(f.name));
-    setItems(audio.map((f) => ({ name: f.name, state: "waiting" })));
-    for (const [i, f] of audio.entries()) {
-      const set = (state: string) => setItems((cur) => cur.map((x, j) => (j === i ? { ...x, state } : x)));
-      set("uploading");
-      try {
-        set((await api.upload(f)) ? "already in library, skipped" : "done");
-      } catch (e) {
-        set(e instanceof Error ? e.message : "failed");
-      }
-    }
-    await onDone();
-  };
-
-  return (
-    <>
-      <div
-        className={over ? "drop over" : "drop"}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); void start([...e.dataTransfer.files]); }}
-      >
-        <p>Drop music files here, or</p>
-        <input type="file" accept="audio/*" multiple onChange={(e) => void start([...(e.target.files ?? [])])} />
-        <p className="muted">MP3, M4A, FLAC, OGG, WAV. Up to 100 MB each. Everyone in your family can play what you upload.</p>
-      </div>
-      <ul>
-        {items.map((it, i) => <li key={i} className="row"><span className="grow">{it.name}</span><small>{it.state}</small></li>)}
-      </ul>
-    </>
-  );
-}
-
-function Family({ family, uid, reload }: { family: FamilyInfo; uid: string; reload: () => Promise<void> }) {
+function Family({ family, uid, reload, refresh }: { family: FamilyInfo; uid: string; reload: () => Promise<void>; refresh: () => Promise<void> }) {
   const [code, setCode] = useState("");
+  const [nasMsg, setNasMsg] = useState("");
+  const syncNas = async () => {
+    const run = Date.now();
+    let offset = 0;
+    let removed = 0;
+    try {
+      for (;;) {
+        setNasMsg(`Syncing… ${offset} songs`);
+        const r = await api.syncNas(offset, run);
+        offset = r.next;
+        removed += r.removed;
+        if (r.done) break;
+      }
+      setNasMsg(`Done: ${offset} songs from the NAS${removed ? `, ${removed} removed` : ""}.`);
+    } catch (e) {
+      setNasMsg(e instanceof Error ? e.message : "Sync failed");
+    }
+    await refresh();
+  };
   return (
     <>
       <h2>{family.name}</h2>
@@ -295,6 +275,11 @@ function Family({ family, uid, reload }: { family: FamilyInfo; uid: string; relo
         <p>
           <button onClick={async () => setCode((await api.invite()).code)}>Create invite code</button>{" "}
           {code && <code className="code">{code}</code>}
+        </p>
+      )}
+      {family.role === "owner" && (
+        <p>
+          <button onClick={() => void syncNas()}>Sync music from NAS</button> <small className="muted">{nasMsg}</small>
         </p>
       )}
       <hr />

@@ -2,7 +2,7 @@
 
 A family music app: Android app (with Android Auto and offline downloads), a web player, and a Cloudflare Worker backend.
 
-- `worker/`: Hono Worker. Firebase sign-in, families (D1), library, playlists, upload, Range streaming from R2, app releases.
+- `worker/`: Hono Worker. Firebase sign-in, families (D1), library, playlists, library sync and Range streaming from a Navidrome NAS (through a Cloudflare Tunnel), app releases.
 - `src/`: web player (React + Vite PWA), served by the Worker as static assets.
 - `flutter/`: Android app (`audio_service` + `just_audio`, Android Auto browse tree, offline downloads).
 - `.github/workflows/ci.yml`: checks on every push; on `main` it deploys the Worker and publishes a signed APK.

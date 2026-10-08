@@ -16,7 +16,7 @@
 	"vars": {
 		"FIREBASE_PROJECT_ID": "mymusic-3149e",
 		// NAS (Navidrome/Subsonic) behind a Cloudflare Tunnel. Empty = NAS disabled.
-		"NAS_BASE_URL": ""
+		"NAS_BASE_URL": "https://navidrome.lv5.uk"
 	},
 	"r2_buckets": [
 		{
