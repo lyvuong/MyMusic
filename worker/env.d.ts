@@ -10,4 +10,5 @@ interface Env {
   NAS_CF_ACCESS_SECRET?: string;
   NAS_USER?: string;
   NAS_PASSWORD?: string;
+  BEETS_AGENT_KEY?: string;
 }

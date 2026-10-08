@@ -3,7 +3,8 @@ import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
 import { findAlbumArt, findArtistImage } from "./artwork";
 import { delta, savePlaylist } from "./library";
-import { nasEnabled, proxyCover, proxyStream, syncPage } from "./nas";
+import { agentKeyOk, claimRun, finishRun, listRuns, requestRun } from "./beets";
+import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { ingest } from "./upload";
 
 type Vars = { user: User; family: Membership };
@@ -13,6 +14,7 @@ const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 // <audio>/<img> elements can't send headers.
 app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/app/android/")) return next(); // APK download: the app is not signed in yet on first install
+  if (c.req.path.startsWith("/api/beets/agent/")) return next(); // the home-server script; authenticates with BEETS_AGENT_KEY
   const url = new URL(c.req.url);
   const mediaPath = /^\/api\/(stream|art|artist-art)\//.test(url.pathname);
   const header = c.req.header("Authorization")?.replace(/^Bearer /, "");
@@ -33,7 +35,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/family/invites"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/runs", "/api/family/invites"]) {
   app.use(p, needFamily);
 }
 
@@ -164,6 +166,57 @@ app.post("/api/nas/sync", async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : "NAS sync failed" }, 502);
   }
+});
+
+/** Starts a Navidrome library scan (owner only). */
+app.post("/api/nas/scan", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  if (!nasEnabled(c.env)) return c.json({ error: "NAS is not configured" }, 501);
+  try {
+    await startScan(c.env);
+    return c.json({ ok: true });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "Could not start the scan" }, 502);
+  }
+});
+
+app.get("/api/nas/scan", async (c) => {
+  if (!nasEnabled(c.env)) return c.json({ error: "NAS is not configured" }, 501);
+  try {
+    return c.json({ scanning: await scanning(c.env) });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "Could not read the scan status" }, 502);
+  }
+});
+
+// ---- Beets on the home server -------------------------------------------------------------
+
+app.get("/api/beets/runs", async (c) => c.json({ runs: await listRuns(c.env.DB, c.get("family").familyId) }));
+
+/** Requests a Beets import (owner only); the server script picks it up within a minute. */
+app.post("/api/beets/run", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  if (!c.env.BEETS_AGENT_KEY) return c.json({ error: "Beets runs are not configured" }, 501);
+  return c.json(await requestRun(c.env.DB, c.get("family").familyId, c.get("user").uid), 201);
+});
+
+/** Polled by the home-server script: the id of a requested run (now marked running) as text, or 204. */
+app.post("/api/beets/agent/poll", async (c) => {
+  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
+  const id = await claimRun(c.env.DB);
+  return id ? c.text(id) : c.body(null, 204);
+});
+
+/** The script's result for a run: ?id=&ok=1|0&before=&after=&exit= with the log tail as the plain-text body. */
+app.post("/api/beets/agent/report", async (c) => {
+  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
+  const q = c.req.query();
+  const num = (v: string | undefined) => (v !== undefined && /^-?\d+$/.test(v) ? Number(v) : null);
+  if (!q.id) return c.json({ error: "id required" }, 400);
+  const ok = await finishRun(c.env.DB, {
+    id: q.id, ok: q.ok === "1", inboxBefore: num(q.before), inboxAfter: num(q.after), exitCode: num(q.exit), log: await c.req.text(),
+  });
+  return ok ? c.json({ ok: true }) : c.json({ error: "no such running run" }, 404);
 });
 
 /** Looks up missing album covers online for up to 10 tracks per call; the client repeats until `remaining` is 0. */

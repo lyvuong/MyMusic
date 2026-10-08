@@ -36,6 +36,7 @@ ul { list-style: none; margin: 8px 0; padding: 0; }
 .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 32px; text-align: center; }
 .drop.over { border-color: var(--accent); }
 .code { font-size: 1.4rem; letter-spacing: .15em; }
+.log { max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: .8rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
 .player { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line); padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); display: grid; gap: 4px; max-width: 900px; margin: 0 auto; }
 .player-info { display: flex; align-items: center; gap: 10px; }
 .player-info .cover { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }

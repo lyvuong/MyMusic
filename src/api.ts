@@ -1,4 +1,4 @@
-import type { FamilyInfo, Playlist, Track } from "../shared/types";
+import type { BeetsRun, FamilyInfo, Playlist, Track } from "../shared/types";
 import { auth } from "./firebase";
 
 export class ApiError extends Error {
@@ -57,6 +57,10 @@ export const api = {
   deletePlaylist: (id: string) => call<void>("DELETE", `/api/playlists/${id}`),
   syncNas: (offset: number, run: number) =>
     call<{ imported: number; next: number; done: boolean; removed: number }>("POST", "/api/nas/sync", { offset, run }),
+  scanNas: () => call<{ ok: boolean }>("POST", "/api/nas/scan"),
+  nasScanning: () => call<{ scanning: boolean }>("GET", "/api/nas/scan"),
+  beetsRuns: () => call<{ runs: BeetsRun[] }>("GET", "/api/beets/runs"),
+  runBeets: () => call<BeetsRun>("POST", "/api/beets/run"),
   fetchArt: () => call<{ updated: number; remaining: number }>("POST", "/api/art/fetch"),
   deleteTrack: (id: string) => call<void>("DELETE", `/api/tracks/${id}`),
 

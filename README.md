@@ -83,6 +83,19 @@ One `compose.yaml` runs four containers: `navidrome`, `filebrowser`, `beets`, `p
 - Root `/srv` = the whole `/mnt/user/Music` share, so uploads go to `/srv/_inbox` (host `/mnt/user/Music/_inbox`). Database: `/mnt/user/appdata/filebrowser` -> `/database`; config: `/mnt/user/appdata/filebrowser/config` -> `/config`.
 - Reached on the LAN (no tunnel recorded here).
 
+### Beets runs from the web app
+
+Family tab (owner only) -> **Organize inbox and update library**: runs Beets on the inbox, then starts a Navidrome scan, then runs "Sync music from NAS", and shows the status and a log tail ("Beets history"). The Worker cannot reach the server, so the server pulls: the button queues a run in D1 (`beets_runs`), the Unraid script `scripts/unraid/beets-agent.sh` polls the Worker every minute, runs `beet import -g -q /downloads` and reports back (files in the inbox before/after, exit code, last 6000 characters of output). Only outgoing HTTPS requests are made; nothing is exposed. A click can take up to a minute to start.
+
+One-time setup:
+1. Pick a random key and store it as a Worker secret: `npx wrangler secret put BEETS_AGENT_KEY` (Worker secrets survive CI deploys).
+2. On Unraid save the same key, on one line, to `/boot/config/mymusic-agent.key` (`chmod 600`).
+3. Unraid -> Settings -> User Scripts -> add a script `beets-agent`, paste `scripts/unraid/beets-agent.sh`, schedule **Custom** `* * * * *`. Check `API`, `INBOX` and the container name `beets` at the top of the script.
+4. The Navidrome user in `NAS_USER` must be an **admin**, or "start scan" is refused and the button stops after Beets finishes.
+5. Push to `main`: CI applies migration `0005_beets_runs.sql` and deploys the Worker and web app.
+
+Notes: the agent shares `/tmp/beets-import.lock` with the 15-minute scheduled import, so the two never overlap; the agent takes only one run at a time. A run that never reports back (server or script died) is marked failed after 2 hours. Imports are quiet (`-q`) and cannot ask questions; anything that needs a human choice still goes through Picard or `beet import -L` in a terminal. The agent endpoints (`/api/beets/agent/*`) skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
+
 ## Local development
 
 ```bash

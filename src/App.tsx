@@ -1,6 +1,6 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FamilyInfo, Playlist, Track } from "../shared/types";
+import type { BeetsRun, FamilyInfo, Playlist, Track } from "../shared/types";
 import { api } from "./api";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
@@ -240,7 +240,7 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
 function Family({ family, uid, reload, refresh }: { family: FamilyInfo; uid: string; reload: () => Promise<void>; refresh: () => Promise<void> }) {
   const [code, setCode] = useState("");
   const [nasMsg, setNasMsg] = useState("");
-  const syncNas = async () => {
+  const syncNas = async (): Promise<boolean> => {
     const run = Date.now();
     let offset = 0;
     let removed = 0;
@@ -253,10 +253,13 @@ function Family({ family, uid, reload, refresh }: { family: FamilyInfo; uid: str
         if (r.done) break;
       }
       setNasMsg(`Done: ${offset} songs from the NAS${removed ? `, ${removed} removed` : ""}.`);
+      return true;
     } catch (e) {
       setNasMsg(e instanceof Error ? e.message : "Sync failed");
+      return false;
+    } finally {
+      await refresh();
     }
-    await refresh();
   };
   return (
     <>
@@ -277,6 +280,7 @@ function Family({ family, uid, reload, refresh }: { family: FamilyInfo; uid: str
           {code && <code className="code">{code}</code>}
         </p>
       )}
+      {family.role === "owner" && <Organize syncNas={syncNas} />}
       {family.role === "owner" && (
         <p>
           <button onClick={() => void syncNas()}>Sync music from NAS</button> <small className="muted">{nasMsg}</small>
@@ -285,6 +289,85 @@ function Family({ family, uid, reload, refresh }: { family: FamilyInfo; uid: str
       <hr />
       <button className="link" onClick={() => signOut()}>Sign out</button>{" "}
       <button className="link danger" onClick={async () => { if (confirm("Delete your account? You leave the family and your playlists are deleted.")) { await api.deleteAccount(); await auth.currentUser?.delete().catch(() => signOut()); } }}>Delete my account</button>
+    </>
+  );
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const when = (t: number) => new Date(t).toLocaleString();
+
+/** Owner tool: run Beets on the home server, then scan Navidrome and sync the library, showing the result. */
+function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
+  const [runs, setRuns] = useState<BeetsRun[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      setRuns((await api.beetsRuns()).runs);
+    } catch {
+      /* shown on the next action */
+    }
+  }, []);
+  useEffect(() => void load(), [load]);
+
+  const organize = async () => {
+    setBusy(true);
+    try {
+      let run = await api.runBeets();
+      const deadline = Date.now() + 40 * 60 * 1000;
+      while (run.status === "requested" || run.status === "running") {
+        if (Date.now() > deadline) throw new Error("Gave up waiting for the server. Check the Unraid script.");
+        setMsg(run.status === "requested" ? "Waiting for the server to pick it up (up to a minute)…" : "Beets is importing…");
+        await sleep(3000);
+        const { runs: latest } = await api.beetsRuns();
+        setRuns(latest);
+        const next = latest.find((r) => r.id === run.id);
+        if (!next) throw new Error("The run disappeared from the history.");
+        run = next;
+      }
+      if (run.status === "failed") throw new Error("Beets failed. See the log below.");
+      setMsg("Scanning Navidrome…");
+      await api.scanNas();
+      await sleep(2000);
+      for (let i = 0; i < 200 && (await api.nasScanning()).scanning; i++) await sleep(3000);
+      setMsg("Syncing the library…");
+      setMsg((await syncNas()) ? "Done: Beets ran, Navidrome scanned and the library synced." : "Beets ran, but the library sync failed.");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setBusy(false);
+      await load();
+    }
+  };
+
+  return (
+    <>
+      <p>
+        <button disabled={busy} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
+        <small className="muted">{msg}</small>
+      </p>
+      {runs.length > 0 && (
+        <details>
+          <summary>Beets history</summary>
+          <ul>
+            {runs.map((r) => (
+              <li key={r.id}>
+                <strong>{r.status}</strong> <small className="muted">{when(r.requestedAt)}</small>
+                {r.inboxBefore !== null && r.inboxAfter !== null && (
+                  <small className="muted"> · inbox {r.inboxBefore} → {r.inboxAfter} files</small>
+                )}
+                {r.log && (
+                  <details>
+                    <summary>Log</summary>
+                    <pre className="log">{r.log}</pre>
+                  </details>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </>
   );
 }

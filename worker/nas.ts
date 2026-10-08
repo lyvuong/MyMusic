@@ -72,6 +72,21 @@ export async function syncPage(env: Env, familyId: string, offset: number, run: 
   return { imported: songs.length, next: offset + songs.length, done, removed };
 }
 
+/** Starts a Navidrome library scan (needs an admin NAS user). */
+export async function startScan(env: Env): Promise<void> {
+  const res = await nasFetch(env, "startScan");
+  if (!res.ok) throw new Error(`NAS answered ${res.status}`);
+  const r = ((await res.json()) as { "subsonic-response": { status: string; error?: { message: string } } })["subsonic-response"];
+  if (r.status !== "ok") throw new Error(r.error?.message ?? "NAS error");
+}
+
+export async function scanning(env: Env): Promise<boolean> {
+  const res = await nasFetch(env, "getScanStatus");
+  if (!res.ok) throw new Error(`NAS answered ${res.status}`);
+  const r = ((await res.json()) as { "subsonic-response": { status: string; scanStatus?: { scanning?: boolean } } })["subsonic-response"];
+  return r.status === "ok" && !!r.scanStatus?.scanning;
+}
+
 /** Streams a NAS song (original file, Range honoured) to the client. */
 export async function proxyStream(env: Env, songId: string, req: Request) {
   const range = req.headers.get("Range");
