@@ -70,6 +70,15 @@ One `compose.yaml` runs four containers: `navidrome`, `filebrowser`, `beets`, `p
 8. **Two import processes at once** (an old scheduled script plus a manual run) fight over the same files. Check with `docker exec beets pgrep -a beet`; the `beet web` line is only the Beets browser UI and is not needed.
 9. **Same artist in two folders by capitalisation** ("Berlin Orchestra" / "Berlin orchestra"): see the next section.
 
+### Fixing ASCII-typed Vietnamese in tags
+`scripts/unraid/fix-vietnamese.py` (runs in the `beets` container, preview unless `--apply`) decodes VIQR-style text in titles, artists and albums: `o*`/`o+` -> ơ, `u*`/`u+` -> ư, `a(` -> ă, `a^ e^ o^` -> â ê ô, `dd`/`d-` -> đ, tones `` ` ' ? ~ . ``, and `_20` -> space. Only fields with clear markers (`a^`, `o*`, `u+`, a backtick after a vowel, a word starting `dd`) are touched, so English titles stay as they are. File names cannot contain `'`, `(` or `?`, so those marks became `_` and are lost: such fields are decoded as far as possible and listed in `/config/vietnamese-review.txt` for hand editing in Mp3tag. `--apostrophes` also restores `_` to `'` in English titles (`Let_s` -> `Let's`).
+
+```bash
+docker exec -i beets /lsiopy/bin/python3 - < /mnt/user/appdata/beets/fix-vietnamese.py            # preview
+docker exec -i beets /lsiopy/bin/python3 - --apply < /mnt/user/appdata/beets/fix-vietnamese.py    # do it
+```
+Beets renames and moves the files to match the new tags; then press **Organize** in the web app. Songs imported with blank tags (`00 -.mp3`) have nothing to decode.
+
 ### Merging artists that differ only by capitals
 `scripts/unraid/merge-artist-case.py` runs inside the `beets` container. It lists every artist and album artist whose spelling differs only by case, keeps the most-used spelling and has Beets retag the others and move the files into one folder. It is a preview unless `--apply` is given, and refuses to run during an import. Copy it to `/mnt/user/appdata/beets/merge-artist-case.py`, then:
 
