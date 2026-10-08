@@ -12,6 +12,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'api.dart';
 import 'models.dart';
 import 'store.dart';
+import 'updater.dart';
 
 /// App-wide state: sign-in, family, the synced library, playlists, downloads and phone files.
 /// Browsing and playing use only [LocalStore], so they work with no network; sync, playlist
@@ -21,6 +22,7 @@ class AppState extends ChangeNotifier {
 
   final LocalStore store;
   final ApiClient api;
+  final updates = UpdateController(); // the "new version" banner
 
   User? user;
   bool familyLoaded = false; // false until the first family lookup (or cache) finishes

@@ -5,6 +5,7 @@ import '../scope.dart';
 import 'now_playing.dart';
 import 'settings.dart';
 import 'track_list.dart';
+import 'update_banner.dart';
 import 'widgets.dart';
 
 class HomeShell extends StatefulWidget {
@@ -14,14 +15,35 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => context.app.updates.check());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) context.app.updates.check();
+  }
 
   @override
   Widget build(BuildContext context) {
     final pages = const [LibraryPage(), PlaylistsPage(), DownloadsPage(), SettingsPage()];
     return Scaffold(
-      body: SafeArea(child: IndexedStack(index: _tab, children: pages)),
+      body: SafeArea(child: Column(children: [
+        UpdateBanner(controller: context.app.updates),
+        Expanded(child: IndexedStack(index: _tab, children: pages)),
+      ])),
       bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
         const MiniPlayer(),
         NavigationBar(
