@@ -65,6 +65,20 @@ One `compose.yaml` runs four containers: `navidrome`, `filebrowser`, `beets`, `p
 3. **Slow imports**: MusicBrainz is rate limited (~1 request/s) and `fetchart`/`lastgenre` add a lookup per album. Optional speed-up while sorting a big inbox: `plugins: musicbrainz scrub`.
 4. **Albums with junk tags** (`05. Track 5.mp3`, `- Unknown 2 -.mp3`, many Vietnamese songs) import as-is. Fix them later by retagging (Picard/Mp3tag or `beet modify`), then `beet import -L`, `beet update`, `beet move`.
 5. **Grayed-out album with "?"**: Navidrome missing files; see the Navidrome section below.
+6. **Untagged files stay in `_inbox` ("This album is already in the library! Skipping.")**: songs with no tags all have a blank artist and album, so after the first as-is import every other one looks like a duplicate of it. They are not real duplicates (checked by checksum). Fix: add the `fromfilename` plugin (title from the file name) and import them as singletons: `beet import -s -q /downloads`. The `singleton` path is `Non-Album/%if{$artist,$artist - }$title` so a missing artist does not give ` - Title.mp3`. The skip reasons are in the log written by `-l /config/skipped.log`.
+7. **Tags cannot be written over SMB (Mp3tag "cannot write")**: Beets runs as root, so imported files are `root:root` with `rw-r-----` and the SMB user `nobody` cannot write them. Fix: `chown -R nobody:users /mnt/user/Music && chmod -R u+rwX,g+rwX,o+rX /mnt/user/Music` (the same as Tools -> New Permissions), only while no import is running. To stop it coming back, set `PUID=99` and `PGID=100` on the `beets` service. In Mp3tag use ID3v2.3 with UTF-16 so Vietnamese text reads correctly everywhere.
+8. **Two import processes at once** (an old scheduled script plus a manual run) fight over the same files. Check with `docker exec beets pgrep -a beet`; the `beet web` line is only the Beets browser UI and is not needed.
+9. **Same artist in two folders by capitalisation** ("Berlin Orchestra" / "Berlin orchestra"): see the next section.
+
+### Merging artists that differ only by capitals
+`scripts/unraid/merge-artist-case.py` runs inside the `beets` container. It lists every artist and album artist whose spelling differs only by case, keeps the most-used spelling and has Beets retag the others and move the files into one folder. It is a preview unless `--apply` is given, and refuses to run during an import. Copy it to `/mnt/user/appdata/beets/merge-artist-case.py`, then:
+
+```bash
+docker exec -i beets python3 - < /mnt/user/appdata/beets/merge-artist-case.py            # preview
+docker exec -i beets python3 - --apply < /mnt/user/appdata/beets/merge-artist-case.py    # do it
+```
+
+Afterwards press **Organize inbox and update library** in the web app (Navidrome rescan and sync). If both folders held the same songs, each song now exists twice in the merged folder; find them with `beet ls -f '$title | $length' albumartist:"Name" | sort` and remove the extras with `beet remove`.
 
 ### Navidrome (container `navidrome`, image `deluan/navidrome:latest`)
 - Port `4533`. Data/db/cache: `/mnt/user/appdata/navidrome` -> `/data`. Music: `/mnt/user/Music` -> `/music` **read-only** (it never writes tags or deletes files).
