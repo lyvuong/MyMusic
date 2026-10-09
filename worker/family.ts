@@ -75,6 +75,7 @@ export async function removeMember(env: Env, uid: string): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE owner_uid = ?)").bind(uid),
     db.prepare("DELETE FROM playlists WHERE owner_uid = ?").bind(uid),
+    db.prepare("DELETE FROM ratings WHERE uid = ?").bind(uid),
     db.prepare("DELETE FROM members WHERE uid = ?").bind(uid),
   ]);
   const next = await db.prepare("SELECT uid FROM members WHERE family_id = ? ORDER BY joined_at LIMIT 1")
@@ -102,6 +103,7 @@ async function deleteFamily(env: Env, familyId: string) {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE family_id = ?)").bind(familyId),
     env.DB.prepare("DELETE FROM playlists WHERE family_id = ?").bind(familyId),
+    env.DB.prepare("DELETE FROM ratings WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM tracks WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM invites WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM families WHERE id = ?").bind(familyId),

@@ -1,4 +1,4 @@
-import type { BeetsRun, FamilyInfo, Playlist, Track } from "../shared/types";
+import type { BeetsRun, FamilyInfo, Playlist, Suggestion, Track } from "../shared/types";
 import { auth } from "./firebase";
 
 export class ApiError extends Error {
@@ -62,6 +62,9 @@ export const api = {
   beetsRuns: () => call<{ runs: BeetsRun[] }>("GET", "/api/beets/runs"),
   runBeets: () => call<BeetsRun>("POST", "/api/beets/run"),
   runEnrich: () => call<BeetsRun>("POST", "/api/beets/enrich"),
+  ratings: () => call<{ ratings: Record<string, number> }>("GET", "/api/ratings"),
+  rateTrack: (id: string, rating: number) => call<void>("PUT", `/api/ratings/${id}`, { rating }),
+  suggest: (prompt: string) => call<Suggestion>("POST", "/api/suggest", { prompt }),
   fetchArt: () => call<{ updated: number; remaining: number }>("POST", "/api/art/fetch"),
   deleteTrack: (id: string) => call<void>("DELETE", `/api/tracks/${id}`),
 

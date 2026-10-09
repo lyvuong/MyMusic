@@ -122,6 +122,12 @@ One-time setup:
 
 Notes: the agent shares `/tmp/beets-import.lock` with the 15-minute scheduled import, so the two never overlap; the agent takes only one run at a time. A run that never reports back (server or script died) is marked failed after 2 hours. Imports are quiet (`-q`) and cannot ask questions; anything that needs a human choice still goes through Mp3tag or `beet import -L` in a terminal. The agent endpoints (`/api/beets/agent/*`) skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
 
+## Ratings and AI suggestions
+
+Every member rates songs 1-5 stars (web: stars on each row and in the player bar; phone: the song menu -> **Rate...** and the stars on the now-playing screen; tap the current star again to clear). Ratings are per person (table `ratings`, migration `0008_ratings.sql`) and the phone queues them while offline.
+
+The **For you** tab asks `POST /api/suggest`, which sends the caller's ratings (favourite artists, loved and disliked songs) plus about 220 candidate songs from the family library to **Cloudflare Workers AI** (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, free daily allowance, no API key). The answer is a themed playlist built only from songs in the library (the model picks candidate numbers, so it cannot invent songs), a reason per song, and a few artists to discover that are not in the library. An optional mood or occasion steers it. Needs the `ai` binding in `wrangler.jsonc` (already there) and at least 3 ratings or a mood. Change the model in `worker/suggest.ts`.
+
 ## Local development
 
 ```bash

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Track } from "../shared/types";
 import { api } from "./api";
 import { ArtistPic, Cover } from "./art";
+import { Stars } from "./ratings";
 
 interface PlayerValue {
   current: Track | null;
@@ -120,6 +121,7 @@ export function PlayerBar() {
         <div className="player-title">
           <strong>{p.current.title}</strong>
           <span>{[p.current.artist, p.current.album].filter(Boolean).join(" · ")}</span>
+          <Stars trackId={p.current.id} title={p.current.title} />
         </div>
       </div>
       <div className="player-mid">

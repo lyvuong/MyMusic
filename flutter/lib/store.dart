@@ -19,6 +19,8 @@ class LocalStore {
   Map<String, int> downloads = {}; // track id -> bytes on disk
   List<String> recent = [];
   List<Map<String, String>> pending = []; // {'op': 'put'|'delete', 'id': playlistId}
+  Map<String, int> ratings = {}; // my 1-5 star ratings by track id
+  Map<String, int> pendingRatings = {}; // ratings not uploaded yet (0 = cleared)
 
   static Future<LocalStore> open() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -42,6 +44,8 @@ class LocalStore {
     downloads = ((j['downloads'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toInt()));
     recent = ((j['recent'] as List?) ?? []).cast<String>().toList();
     pending = ((j['pending'] as List?) ?? []).map((e) => (e as Map).cast<String, String>()).toList();
+    ratings = ((j['ratings'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toInt()));
+    pendingRatings = ((j['pendingRatings'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toInt()));
   }
 
   Future<void> save() async {
@@ -54,6 +58,8 @@ class LocalStore {
       'downloads': downloads,
       'recent': recent,
       'pending': pending,
+      'ratings': ratings,
+      'pendingRatings': pendingRatings,
     };
     final tmp = File('${_file.path}.tmp');
     await tmp.writeAsString(jsonEncode(j), flush: true);
@@ -69,5 +75,7 @@ class LocalStore {
     downloads = {};
     recent = [];
     pending = [];
+    ratings = {};
+    pendingRatings = {};
   }
 }

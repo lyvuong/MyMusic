@@ -122,3 +122,22 @@ class FamilyInfo {
 
   Map<String, dynamic> toJson() => {'id': id, 'name': name, 'role': role, 'members': members.map((m) => m.toJson()).toList()};
 }
+
+/// An AI listening suggestion: a playlist from the library plus artists to discover.
+class Suggestion {
+  const Suggestion({required this.title, required this.intro, required this.tracks, required this.discover});
+  final String title;
+  final String intro;
+  final List<({String id, String why})> tracks;
+  final List<({String artist, String album, String why})> discover;
+
+  factory Suggestion.fromJson(Map<String, dynamic> j) => Suggestion(
+        title: (j['title'] as String?) ?? '',
+        intro: (j['intro'] as String?) ?? '',
+        tracks: [for (final t in (j['tracks'] as List? ?? [])) (id: t['id'] as String, why: (t['why'] as String?) ?? '')],
+        discover: [
+          for (final d in (j['discover'] as List? ?? []))
+            (artist: d['artist'] as String, album: (d['album'] as String?) ?? '', why: (d['why'] as String?) ?? ''),
+        ],
+      );
+}

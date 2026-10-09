@@ -149,6 +149,11 @@ class AppState extends ChangeNotifier {
         deleted ? store.playlists.remove(p.id) : store.playlists[p.id] = p;
       }
       store.since = d.now;
+      try {
+        await _pullRatings();
+      } catch (_) {
+        // Ratings are best-effort; the library itself synced.
+      }
       message = null;
       await store.save();
     } on ApiException catch (e) {
@@ -163,6 +168,58 @@ class AppState extends ChangeNotifier {
       syncing = false;
       notifyListeners();
     }
+  }
+
+  // ---- Ratings ----------------------------------------------------------------------------
+
+  /// My rating of a song, 0 when unrated.
+  int ratingOf(String id) => store.ratings[id] ?? 0;
+
+  /// Rates a song (0 clears). Saved on the phone at once and uploaded when there is a connection.
+  Future<void> rate(String id, int stars) async {
+    if (id.startsWith('local:')) return; // phone files are not in the family library
+    if (stars == 0) {
+      store.ratings.remove(id);
+    } else {
+      store.ratings[id] = stars;
+    }
+    store.pendingRatings[id] = stars;
+    await store.save();
+    notifyListeners();
+    unawaited(_flushRatings());
+  }
+
+  Future<void> _flushRatings() async {
+    for (final e in store.pendingRatings.entries.toList()) {
+      try {
+        await api.putRating(e.key, e.value);
+      } on ApiException catch (ex) {
+        if (ex.status != 404 && ex.status != 400) return; // 404/400: rejected for good, drop it
+      } catch (_) {
+        return; // offline: keep the rest queued
+      }
+      if (store.pendingRatings[e.key] == e.value) store.pendingRatings.remove(e.key);
+    }
+    await store.save();
+  }
+
+  Future<void> _pullRatings() async {
+    await _flushRatings();
+    final server = await api.getRatings();
+    for (final e in store.pendingRatings.entries) {
+      if (e.value == 0) {
+        server.remove(e.key);
+      } else {
+        server[e.key] = e.value;
+      }
+    }
+    store.ratings = server;
+  }
+
+  /// A playlist and new-music ideas from my ratings, optionally for a mood. Needs a connection.
+  Future<Suggestion> suggest(String prompt) async {
+    await _flushRatings();
+    return api.suggest(prompt);
   }
 
   // ---- Playlists --------------------------------------------------------------------------

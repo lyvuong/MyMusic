@@ -11,4 +11,6 @@ interface Env {
   NAS_USER?: string;
   NAS_PASSWORD?: string;
   BEETS_AGENT_KEY?: string;
+  /** Workers AI binding (free daily allowance); suggestions are disabled without it. */
+  AI?: { run(model: string, input: unknown): Promise<unknown> };
 }

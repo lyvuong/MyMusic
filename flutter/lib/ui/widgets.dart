@@ -43,9 +43,39 @@ class TrackArt extends StatelessWidget {
   }
 }
 
+/// Five tappable stars for a song; tapping the star that matches the current rating clears it.
+class RatingStars extends StatelessWidget {
+  const RatingStars(this.track, {super.key, this.size = 32});
+  final Track track;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.app;
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final mine = app.ratingOf(track.id);
+        final color = Theme.of(context).colorScheme.primary;
+        return Row(mainAxisSize: MainAxisSize.min, children: [
+          for (var n = 1; n <= 5; n++)
+            IconButton(
+              iconSize: size,
+              visualDensity: VisualDensity.compact,
+              tooltip: '$n star${n == 1 ? '' : 's'}',
+              icon: Icon(n <= mine ? Icons.star : Icons.star_border, color: n <= mine ? color : null),
+              onPressed: () => app.rate(track.id, n == mine ? 0 : n),
+            ),
+        ]);
+      },
+    );
+  }
+}
+
 /// One song row. Tapping plays [queue] from this song.
 class TrackTile extends StatelessWidget {
-  const TrackTile({super.key, required this.track, required this.queue, this.onRemove});
+  const TrackTile({super.key, required this.track, required this.queue, this.onRemove, this.note});
+  final String? note; // e.g. why the AI picked it, shown under the artist
   final Track track;
   final List<Track> queue;
   final VoidCallback? onRemove; // set inside a playlist
@@ -61,7 +91,15 @@ class TrackTile extends StatelessWidget {
         return ListTile(
           leading: TrackArt(track),
           title: Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text([track.artist, track.album].where((s) => s.isNotEmpty).join(' - '), maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              [if (app.ratingOf(track.id) > 0) '★ ${app.ratingOf(track.id)}', track.artist, track.album].where((s) => s.isNotEmpty).join(' - '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (note != null && note!.isNotEmpty)
+              Text(note!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontStyle: FontStyle.italic, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          ]),
           onTap: () => context.audio.playQueue(queue, queue.indexWhere((t) => t.id == track.id)),
           trailing: Row(mainAxisSize: MainAxisSize.min, children: [
             if (pct != null)
@@ -74,6 +112,7 @@ class TrackTile extends StatelessWidget {
               onSelected: (v) => _onMenu(context, v),
               itemBuilder: (_) => [
                 const PopupMenuItem(value: 'playlist', child: Text('Add to playlist')),
+                if (!track.isLocal) const PopupMenuItem(value: 'rate', child: Text('Rate...')),
                 if (!track.isLocal)
                   downloaded
                       ? const PopupMenuItem(value: 'undownload', child: Text('Remove download'))
@@ -98,6 +137,20 @@ class TrackTile extends StatelessWidget {
         onRemove?.call();
       case 'playlist':
         await addToPlaylistDialog(context, track);
+      case 'rate':
+        await showModalBottomSheet<void>(
+          context: context,
+          builder: (_) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(track.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                RatingStars(track, size: 40),
+              ]),
+            ),
+          ),
+        );
     }
   }
 }

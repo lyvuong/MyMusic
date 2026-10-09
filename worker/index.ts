@@ -5,6 +5,8 @@ import { findAlbumArt, findArtistImage } from "./artwork";
 import { delta, savePlaylist } from "./library";
 import { agentKeyOk, claimEnrich, claimRun, finishRun, listRuns, requestEnrich, requestRun, startEnrich, updateProgress } from "./beets";
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
+import { getRatings, setRating } from "./ratings";
+import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
 
 type Vars = { user: User; family: Membership };
@@ -35,7 +37,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/family/invites"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest"]) {
   app.use(p, needFamily);
 }
 
@@ -104,6 +106,29 @@ app.delete("/api/playlists/:id", async (c) => {
   await c.env.DB.prepare("UPDATE playlists SET deleted = 1, updated_at = ? WHERE id = ? AND owner_uid = ? AND family_id = ?")
     .bind(Date.now(), c.req.param("id"), c.get("user").uid, c.get("family").familyId).run();
   return c.json({ ok: true });
+});
+
+// ---- Ratings and AI suggestions -----------------------------------------------------------
+
+app.get("/api/ratings", async (c) => c.json({ ratings: await getRatings(c.env.DB, c.get("user").uid) }));
+
+/** Sets the caller's rating for a song: 1-5 stars, or 0 to clear. */
+app.put("/api/ratings/:trackId", async (c) => {
+  const { rating } = await c.req.json<{ rating?: number }>().catch(() => ({ rating: undefined }));
+  if (typeof rating !== "number" || !Number.isInteger(rating) || rating < 0 || rating > 5) return c.json({ error: "rating must be 0-5" }, 400);
+  const ok = await setRating(c.env.DB, c.get("family").familyId, c.get("user").uid, c.req.param("trackId"), rating);
+  return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
+});
+
+/** A playlist and new-music ideas from the caller's ratings, optionally steered by a mood or occasion. */
+app.post("/api/suggest", async (c) => {
+  const { prompt } = await c.req.json<{ prompt?: string }>().catch(() => ({ prompt: undefined }));
+  try {
+    return c.json(await suggest(c.env, c.get("family").familyId, c.get("user").uid, (prompt ?? "").trim()));
+  } catch (e) {
+    if (e instanceof SuggestError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
 });
 
 app.post("/api/upload", async (c) => {

@@ -75,7 +75,8 @@ class NowPlayingScreen extends StatelessWidget {
               const Spacer(),
               Text(item.title, style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center, maxLines: 2),
               if (item.artist != null) Text(item.artist!, style: Theme.of(context).textTheme.bodyLarge),
-              const SizedBox(height: 16),
+              if (track != null && !track.isLocal) RatingStars(track),
+              const SizedBox(height: 8),
               _SeekBar(duration: item.duration ?? Duration.zero),
               StreamBuilder<PlaybackState>(
                 stream: audio.playbackState,

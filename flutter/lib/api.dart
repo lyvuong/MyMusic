@@ -34,14 +34,14 @@ class ApiClient {
   Uri streamUri(String id) => Uri.parse('${Env.apiUrl}/api/stream/$id');
   String artUrl(String id) => '${Env.apiUrl}/api/art/$id';
 
-  Future<dynamic> _send(String method, String path, {Object? body}) async {
+  Future<dynamic> _send(String method, String path, {Object? body, Duration timeout = const Duration(seconds: 20)}) async {
     final req = http.Request(method, Uri.parse('${Env.apiUrl}$path'));
     req.headers.addAll(await authHeaders());
     if (body != null) {
       req.headers['Content-Type'] = 'application/json';
       req.body = jsonEncode(body);
     }
-    final res = await http.Response.fromStream(await req.send().timeout(const Duration(seconds: 20)));
+    final res = await http.Response.fromStream(await req.send().timeout(timeout));
     if (res.statusCode >= 300) {
       var msg = 'Request failed (${res.statusCode})';
       try {
@@ -88,4 +88,16 @@ class ApiClient {
       _send('PUT', '/api/playlists/${p.id}', body: {'name': p.name, 'shared': p.shared, 'trackIds': p.trackIds});
 
   Future<void> deletePlaylist(String id) => _send('DELETE', '/api/playlists/$id');
+
+  /// My ratings by track id.
+  Future<Map<String, int>> getRatings() async {
+    final j = await _send('GET', '/api/ratings') as Map<String, dynamic>;
+    return (j['ratings'] as Map).map((k, v) => MapEntry(k as String, (v as num).toInt()));
+  }
+
+  /// 1-5 stars; 0 clears the rating.
+  Future<void> putRating(String trackId, int stars) => _send('PUT', '/api/ratings/$trackId', body: {'rating': stars});
+
+  Future<Suggestion> suggest(String prompt) async =>
+      Suggestion.fromJson(await _send('POST', '/api/suggest', body: {'prompt': prompt}, timeout: const Duration(seconds: 90)) as Map<String, dynamic>);
 }

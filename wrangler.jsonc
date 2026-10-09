@@ -28,6 +28,10 @@
 			"bucket_name": "mymusic-releases"
 		}
 	],
+	// Workers AI for the rating-based suggestions (free daily allowance)
+	"ai": {
+		"binding": "AI"
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",

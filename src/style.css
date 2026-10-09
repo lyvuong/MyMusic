@@ -146,3 +146,20 @@ input.pick { width: 20px; height: 20px; flex: none; accent-color: var(--accent);
 .spinner { display: inline-block; width: 1em; height: 1em; margin: 0 .5em; vertical-align: -.15em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
+/* Ratings and AI suggestions */
+.stars { display: inline-flex; flex: none; }
+button.star { background: none; border: none; padding: 0 1px; width: 24px; height: 32px; border-radius: 6px; color: var(--muted); font-size: 1.1rem; line-height: 1; }
+button.star.on { color: var(--accent); }
+button.star:hover:not(:disabled) { background: none; color: var(--accent); }
+.player-title .stars { margin-top: 2px; }
+.player-title .stars button.star { height: 26px; font-size: 1.2rem; }
+.suggest-form { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+.suggest-form input { flex: 1 1 240px; }
+.suggest-intro { margin: 4px 0 8px; }
+.discover li { padding: 6px 8px; }
+.discover li small { display: block; color: var(--muted); }
+@media (max-width: 640px) {
+  .row .dur { display: none; }
+  button.star { width: 20px; }
+}

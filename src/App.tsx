@@ -1,14 +1,15 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { BeetsRun, FamilyInfo, Playlist, Track } from "../shared/types";
+import type { BeetsRun, FamilyInfo, Playlist, Suggestion, Track } from "../shared/types";
 import { api } from "./api";
 import { ArtistPic, Cover } from "./art";
 import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } from "./browse";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
+import { RatingsProvider, Stars } from "./ratings";
 import { useLibrary } from "./useLibrary";
 
-type Tab = "library" | "playlists" | "family";
+type Tab = "library" | "foryou" | "playlists" | "family";
 
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = still loading
@@ -38,7 +39,9 @@ export function App() {
   if (!family) return <FamilySetup onDone={setFamily} />;
   return (
     <PlayerProvider>
-      <Shell user={user} family={family} reloadFamily={loadFamily} />
+      <RatingsProvider>
+        <Shell user={user} family={family} reloadFamily={loadFamily} />
+      </RatingsProvider>
     </PlayerProvider>
   );
 }
@@ -85,7 +88,7 @@ function FamilySetup({ onDone }: { onDone: (f: FamilyInfo) => void }) {
 function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo; reloadFamily: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("library");
   const lib = useLibrary(true);
-  const tabs: [Tab, string][] = [["library", "Library"], ["playlists", "Playlists"], ["family", "Family"]];
+  const tabs: [Tab, string][] = [["library", "Library"], ["foryou", "For you"], ["playlists", "Playlists"], ["family", "Family"]];
   return (
     <div className="shell">
       <header>
@@ -98,6 +101,7 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
       </header>
       <main>
         {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} />}
+        {tab === "foryou" && <ForYou lib={lib} />}
         {tab === "playlists" && <Playlists lib={lib} uid={user.uid} />}
         {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} refresh={lib.refresh} />}
       </main>
@@ -106,7 +110,7 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
   );
 }
 
-function TrackRow({ t, queue, extra, number, hideArtist, select }: { t: Track; queue: Track[]; extra?: React.ReactNode; number?: number; hideArtist?: boolean; select?: { picked: boolean; toggle: () => void } }) {
+function TrackRow({ t, queue, extra, number, hideArtist, select, note }: { t: Track; queue: Track[]; extra?: React.ReactNode; number?: number; hideArtist?: boolean; select?: { picked: boolean; toggle: () => void }; note?: string }) {
   const p = usePlayer();
   const active = p.current?.id === t.id;
   const mins = Math.floor(t.duration / 60);
@@ -117,8 +121,13 @@ function TrackRow({ t, queue, extra, number, hideArtist, select }: { t: Track; q
         {number === undefined ? <Cover track={t} seed={t.album || t.title} className="sm" /> : <span className="num">{number || "–"}</span>}
         <span className="badge">{active && p.playing ? "♪" : "▶"}</span>
       </button>
-      <span className="grow"><strong>{t.title}</strong><small>{[hideArtist ? "" : t.artist, number === undefined ? t.album : ""].filter(Boolean).join(" · ")}</small></span>
+      <span className="grow">
+        <strong>{t.title}</strong>
+        <small>{[hideArtist ? "" : t.artist, number === undefined ? t.album : ""].filter(Boolean).join(" · ")}</small>
+        {note && <small className="muted">{note}</small>}
+      </span>
       {t.duration > 0 && <small className="dur">{mins}:{String(Math.floor(t.duration % 60)).padStart(2, "0")}</small>}
+      {!select && <Stars trackId={t.id} title={t.title} />}
       {extra}
     </li>
   );
@@ -350,6 +359,96 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
           <ul>
             {songs.map((t) => <TrackRow key={t.id} t={t} queue={songs} extra={selecting ? undefined : rowExtra(t)} select={rowSelect(t)} />)}
           </ul>
+        </>
+      )}
+    </>
+  );
+}
+
+/** AI suggestions from your ratings: a playlist from the library plus artists you might like, optionally for a mood. */
+const MOODS = ["Rainy evening", "Workout", "Focus", "Dinner with family", "Road trip"];
+interface ForYouState { busy: boolean; error: string; result: Suggestion | null; prompt: string }
+let forYouState: ForYouState = { busy: false, error: "", result: null, prompt: "" };
+const forYouSubs = new Set<() => void>();
+const setForYou = (patch: Partial<ForYouState>) => {
+  forYouState = { ...forYouState, ...patch };
+  forYouSubs.forEach((f) => f());
+};
+const watchForYou = (f: () => void) => {
+  forYouSubs.add(f);
+  return () => void forYouSubs.delete(f);
+};
+
+function ForYou({ lib }: { lib: ReturnType<typeof useLibrary> }) {
+  const { busy, error, result, prompt: mood } = useSyncExternalStore(watchForYou, () => forYouState);
+  const p = usePlayer();
+  const [saved, setSaved] = useState("");
+  useEffect(() => setSaved(""), [result]);
+
+  const ask = async () => {
+    setForYou({ busy: true, error: "" });
+    try {
+      setForYou({ result: await api.suggest(mood.trim()), busy: false });
+    } catch (e) {
+      setForYou({ error: e instanceof Error ? e.message : "Could not get suggestions", busy: false });
+    }
+  };
+
+  const picks = (result?.tracks ?? [])
+    .map((s) => ({ t: lib.tracks.get(s.id), why: s.why }))
+    .filter((x): x is { t: Track; why: string } => !!x.t);
+  const queue = picks.map((x) => x.t);
+
+  const save = async () => {
+    if (!result) return;
+    try {
+      await api.savePlaylist({ id: crypto.randomUUID(), name: result.title, shared: false, trackIds: queue.map((t) => t.id) });
+      await lib.refresh();
+      setSaved(`Saved as a playlist: ${result.title}`);
+    } catch (e) {
+      setSaved(e instanceof Error ? e.message : "Could not save the playlist");
+    }
+  };
+
+  return (
+    <>
+      <h2>For you</h2>
+      <p className="muted">Rate songs with the stars and an AI picks what to listen to next. Add a mood if you want.</p>
+      <form className="suggest-form" onSubmit={(e) => { e.preventDefault(); void ask(); }}>
+        <input placeholder="Mood or occasion (optional)" value={mood} maxLength={200} onChange={(e) => setForYou({ prompt: e.target.value })} />
+        <button className="primary" type="submit" disabled={busy}>{busy ? "Thinking…" : "Suggest"}</button>
+        {busy && <span className="spinner" aria-hidden="true" />}
+      </form>
+      <div className="seg">
+        {MOODS.map((m) => <button key={m} onClick={() => setForYou({ prompt: m })}>{m}</button>)}
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+      {result && (
+        <>
+          <h3>{result.title}</h3>
+          <p className="suggest-intro">{result.intro}</p>
+          <p>
+            <button className="primary" onClick={() => p.play(queue, 0)}>▶ Play</button>{" "}
+            <button onClick={() => void save()}>Save as playlist</button>{" "}
+            <button className="link" onClick={() => void ask()} disabled={busy}>Try again</button>{" "}
+            <small className="muted">{saved}</small>
+          </p>
+          <ul>
+            {picks.map((x) => <TrackRow key={x.t.id} t={x.t} queue={queue} note={x.why} />)}
+          </ul>
+          {result.discover.length > 0 && (
+            <section className="discover">
+              <h3>To discover</h3>
+              <ul>
+                {result.discover.map((d) => (
+                  <li key={`${d.artist}|${d.album}`}>
+                    <strong>{d.artist}</strong>{d.album ? ` · ${d.album}` : ""}
+                    <small>{d.why}</small>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </>
       )}
     </>

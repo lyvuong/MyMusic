@@ -31,6 +31,16 @@ export interface FamilyInfo {
   members: { uid: string; displayName: string; email: string; role: "owner" | "member" }[];
 }
 
+/** An AI listening suggestion built from the caller's ratings. */
+export interface Suggestion {
+  title: string;
+  intro: string;
+  /** Songs from the library, in listening order, each with a short reason. */
+  tracks: { id: string; why: string }[];
+  /** Artists or albums that are not in the library. */
+  discover: { artist: string; album: string; why: string }[];
+}
+
 /** One Beets import on the home server, requested from the web app. */
 export interface BeetsRun {
   id: string;
