@@ -658,6 +658,9 @@ function Family({ family, uid, reload, refresh, home, recheck }: { family: Famil
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const when = (t: number) => new Date(t).toLocaleString();
 
+/** The enrich job's steps, in the order the home server runs them (it reports "step k of n" through the progress fields). */
+const ENRICH_STEPS = ["Fetching missing cover art", "Embedding covers into the files", "Looking up genres"];
+
 /** Owner tool: run Beets on the home server, then scan Navidrome and sync the library, showing the result. */
 interface OrganizeState { busy: boolean; msg: string; runs: BeetsRun[]; active: BeetsRun | null }
 let organizeState: OrganizeState = { busy: false, msg: "", runs: [], active: null };
@@ -760,7 +763,17 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
           Home server unavailable: {home.error} <button className="link" onClick={() => void recheck()}>Check again</button>
         </p>
       )}
-      {active?.status === "running" && active.inboxBefore !== null && active.inboxNow !== null && active.inboxBefore > 0 && (
+      {active?.status === "running" && active.kind === "enrich" && (
+        <p>
+          <progress max={ENRICH_STEPS.length} value={Math.min(ENRICH_STEPS.length, Math.max(0, (active.inboxBefore ?? ENRICH_STEPS.length) - (active.inboxNow ?? ENRICH_STEPS.length)))} />{" "}
+          <small className="muted">
+            {active.inboxNow === null
+              ? "Waiting for the server to start…"
+              : `Step ${Math.min(ENRICH_STEPS.length, (active.inboxBefore ?? ENRICH_STEPS.length) - active.inboxNow + 1)} of ${ENRICH_STEPS.length}: ${ENRICH_STEPS[Math.min(ENRICH_STEPS.length - 1, Math.max(0, (active.inboxBefore ?? ENRICH_STEPS.length) - active.inboxNow))]}`}
+          </small>
+        </p>
+      )}
+      {active?.status === "running" && active.kind === "import" && active.inboxBefore !== null && active.inboxNow !== null && active.inboxBefore > 0 && (
         <p>
           <progress max={active.inboxBefore} value={Math.max(0, active.inboxBefore - active.inboxNow)} />{" "}
           <small className="muted">{Math.max(0, active.inboxBefore - active.inboxNow)} of {active.inboxBefore} files imported</small>
@@ -772,7 +785,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
           <ul>
             {runs.map((r) => (
               <li key={r.id}>
-                <strong>{r.kind === "enrich" ? "Nightly enrich" : "Import"}: {r.status}</strong> <small className="muted">{when(r.requestedAt)}</small>
+                <strong>{r.kind === "enrich" ? "Enrich (covers and genres)" : "Import"}: {r.status}</strong> <small className="muted">{when(r.requestedAt)}</small>
                 {r.kind === "import" && r.inboxBefore !== null && r.inboxAfter !== null && (
                   <small className="muted"> · inbox {r.inboxBefore} → {r.inboxAfter} files</small>
                 )}

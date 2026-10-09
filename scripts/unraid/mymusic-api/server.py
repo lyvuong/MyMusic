@@ -239,7 +239,10 @@ def run_enrich(run_id):
     try:
         with beets_lock(7200):
             lines.append("=== %s enrich start (manual) ===\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
-            for cmd in (["beet", "fetchart"], ["beet", "embedart", "-y", "added:-14d.."], ["beet", "lastgenre"]):
+            steps = (["beet", "fetchart"], ["beet", "embedart", "-y", "added:-14d.."], ["beet", "lastgenre"])
+            for i, cmd in enumerate(steps):
+                # Progress for the app: before = number of steps, now = steps still to do (the app shows "step k of n").
+                worker_post("/api/beets/agent/progress", {"id": run_id, "before": len(steps), "now": len(steps) - i})
                 r = subprocess.run(DOCKER + ["exec", BEETS] + cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
                 lines.append(r.stdout + r.stderr)
                 if r.returncode:
