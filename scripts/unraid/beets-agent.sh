@@ -27,15 +27,15 @@ count() { find "$INBOX" -type f 2>/dev/null | wc -l; }
 LOG=$(mktemp)
 BEFORE=$(count)
 # Wait (up to an hour) if the scheduled import is running, so two imports never overlap.
-# `-p musicbrainz,scrub` loads only those plugins (overrides config.yaml) so the import skips the per-album art and
+# `-p musicbrainz,scrub,fromfilename` loads only those plugins (overrides config.yaml) so the import skips the per-album art and
 # genre lookups; beets-enrich.sh adds them at night.
 # Pass 1 groups files into albums by their tags. Pass 2 imports what is still in the inbox one by one: untagged
 # files all share a blank artist/album, so pass 1 skips all but the first as "already in the library".
 flock -w 3600 /tmp/beets-import.lock sh -c '
-  docker exec beets beet -p musicbrainz,scrub import -g -q /downloads
+  docker exec beets beet -p musicbrainz,scrub,fromfilename import -g -q /downloads
   E=$?
   echo "--- second pass: leftovers as single tracks ---"
-  docker exec beets beet -p musicbrainz,scrub import -s -q /downloads || E=$?
+  docker exec beets beet -p musicbrainz,scrub,fromfilename import -s -q /downloads || E=$?
   exit $E' > "$LOG" 2>&1 &
 PID=$!
 # Progress for the web app: files left in the inbox, sent every 10 seconds while the import runs.
