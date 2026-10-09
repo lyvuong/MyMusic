@@ -461,8 +461,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const when = (t: number) => new Date(t).toLocaleString();
 
 /** Owner tool: run Beets on the home server, then scan Navidrome and sync the library, showing the result. */
-interface OrganizeState { busy: boolean; msg: string; runs: BeetsRun[] }
-let organizeState: OrganizeState = { busy: false, msg: "", runs: [] };
+interface OrganizeState { busy: boolean; msg: string; runs: BeetsRun[]; active: BeetsRun | null }
+let organizeState: OrganizeState = { busy: false, msg: "", runs: [], active: null };
 const organizeSubs = new Set<() => void>();
 const setOrganize = (patch: Partial<OrganizeState>) => {
   organizeState = { ...organizeState, ...patch };
@@ -493,14 +493,16 @@ async function followRun(first: BeetsRun, syncNas: () => Promise<boolean>) {
     const deadline = Date.now() + 40 * 60 * 1000;
     while (run.status === "requested" || run.status === "running") {
       if (Date.now() > deadline) throw new Error("Gave up waiting for the server. Check the Unraid script.");
-      setOrganize({ msg: run.status === "requested" ? "Waiting for the server to pick it up (up to a minute)…" : "Beets is importing…" });
+      setOrganize({ msg: run.status === "requested" ? "Waiting for the server to pick it up (up to a minute)…" : "Beets is importing…", active: run });
       await sleep(3000);
       const { runs: latest } = await api.beetsRuns();
       setOrganize({ runs: latest });
       const next = latest.find((r) => r.id === run.id);
       if (!next) throw new Error("The run disappeared from the history.");
       run = next;
+      setOrganize({ active: run });
     }
+    setOrganize({ active: null });
     if (run.status === "failed") throw new Error("Beets failed. See the log below.");
     setOrganize({ msg: "Scanning Navidrome…" });
     await api.scanNas();
@@ -511,13 +513,13 @@ async function followRun(first: BeetsRun, syncNas: () => Promise<boolean>) {
   } catch (e) {
     setOrganize({ msg: e instanceof Error ? e.message : "Failed" });
   } finally {
-    setOrganize({ busy: false });
+    setOrganize({ busy: false, active: null });
     await refreshRuns();
   }
 }
 
 function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
-  const { busy, msg, runs } = useSyncExternalStore(watchOrganize, () => organizeState);
+  const { busy, msg, runs, active } = useSyncExternalStore(watchOrganize, () => organizeState);
   const sync = useRef(syncNas);
   sync.current = syncNas;
 
@@ -542,8 +544,15 @@ function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
     <>
       <p>
         <button disabled={busy} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
+        {busy && <span className="spinner" aria-hidden="true" />}
         <small className="muted" role="status">{msg}</small>
       </p>
+      {active?.status === "running" && active.inboxBefore !== null && active.inboxNow !== null && active.inboxBefore > 0 && (
+        <p>
+          <progress max={active.inboxBefore} value={Math.max(0, active.inboxBefore - active.inboxNow)} />{" "}
+          <small className="muted">{Math.max(0, active.inboxBefore - active.inboxNow)} of {active.inboxBefore} files imported</small>
+        </p>
+      )}
       {runs.length > 0 && (
         <details>
           <summary>Beets history</summary>

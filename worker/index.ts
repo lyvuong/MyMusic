@@ -3,7 +3,7 @@ import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
 import { findAlbumArt, findArtistImage } from "./artwork";
 import { delta, savePlaylist } from "./library";
-import { agentKeyOk, claimRun, finishRun, listRuns, requestRun } from "./beets";
+import { agentKeyOk, claimRun, finishRun, listRuns, requestRun, updateProgress } from "./beets";
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { ingest } from "./upload";
 
@@ -205,6 +205,15 @@ app.post("/api/beets/agent/poll", async (c) => {
   if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
   const id = await claimRun(c.env.DB);
   return id ? c.text(id) : c.body(null, 204);
+});
+
+/** Progress heartbeat while a run is going: ?id=&before=&now= (files in the inbox). */
+app.post("/api/beets/agent/progress", async (c) => {
+  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
+  const q = c.req.query();
+  const num = (v: string | undefined) => (v !== undefined && /^\d+$/.test(v) ? Number(v) : null);
+  if (!q.id) return c.json({ error: "id required" }, 400);
+  return (await updateProgress(c.env.DB, q.id, num(q.before), num(q.now))) ? c.json({ ok: true }) : c.json({ error: "no such running run" }, 404);
 });
 
 /** The script's result for a run: ?id=&ok=1|0&before=&after=&exit= with the log tail as the plain-text body. */

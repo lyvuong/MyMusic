@@ -142,3 +142,7 @@ input.pick { width: 20px; height: 20px; flex: none; accent-color: var(--accent);
   .selectbar button { padding: 8px 12px; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 }
+
+.spinner { display: inline-block; width: 1em; height: 1em; margin: 0 .5em; vertical-align: -.15em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }

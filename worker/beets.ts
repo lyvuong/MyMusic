@@ -11,12 +11,12 @@ const KEEP = 20;
 
 interface RunRow {
   id: string; status: BeetsRun["status"]; requested_at: number; started_at: number | null; finished_at: number | null;
-  inbox_before: number | null; inbox_after: number | null; exit_code: number | null; log: string;
+  inbox_before: number | null; inbox_after: number | null; inbox_now: number | null; exit_code: number | null; log: string;
 }
 
 const toRun = (r: RunRow): BeetsRun => ({
   id: r.id, status: r.status, requestedAt: r.requested_at, startedAt: r.started_at, finishedAt: r.finished_at,
-  inboxBefore: r.inbox_before, inboxAfter: r.inbox_after, exitCode: r.exit_code, log: r.log,
+  inboxBefore: r.inbox_before, inboxAfter: r.inbox_after, inboxNow: r.inbox_now, exitCode: r.exit_code, log: r.log,
 });
 
 /** The most recent runs, newest first. */
@@ -50,6 +50,13 @@ export async function claimRun(db: D1Database): Promise<string | null> {
       "WHERE id = (SELECT id FROM beets_runs WHERE status = 'requested' ORDER BY requested_at LIMIT 1) AND status = 'requested' RETURNING id",
   ).bind(Date.now()).first<{ id: string }>();
   return r?.id ?? null;
+}
+
+/** Live progress from the polling script: files in the inbox when the run began and right now. */
+export async function updateProgress(db: D1Database, id: string, before: number | null, now: number | null): Promise<boolean> {
+  const res = await db.prepare("UPDATE beets_runs SET inbox_before = COALESCE(inbox_before, ?), inbox_now = ? WHERE id = ? AND status = 'running'")
+    .bind(before, now, id).run();
+  return (res.meta.changes ?? 0) > 0;
 }
 
 export interface RunReport {

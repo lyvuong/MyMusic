@@ -41,6 +41,8 @@ export interface BeetsRun {
   /** Files waiting in the inbox before and after the run. */
   inboxBefore: number | null;
   inboxAfter: number | null;
+  /** Files still in the inbox right now, reported while the run is going. */
+  inboxNow: number | null;
   exitCode: number | null;
   /** The end of the import output. */
   log: string;

@@ -34,7 +34,18 @@ flock -w 3600 /tmp/beets-import.lock sh -c '
   E=$?
   echo "--- second pass: leftovers as single tracks ---"
   docker exec beets beet import -s -q /downloads || E=$?
-  exit $E' > "$LOG" 2>&1
+  exit $E' > "$LOG" 2>&1 &
+PID=$!
+# Progress for the web app: files left in the inbox, sent every 10 seconds while the import runs.
+progress() {
+  curl -fsS --max-time 10 -X POST -H "X-Agent-Key: $KEY" "$API/api/beets/agent/progress?id=$ID&before=$BEFORE&now=$(count)" > /dev/null 2>&1
+}
+progress
+while kill -0 "$PID" 2>/dev/null; do
+  sleep 10
+  progress
+done
+wait "$PID"
 EXIT=$?
 AFTER=$(count)
 cat "$LOG" >> "$IMPORT_LOG"
