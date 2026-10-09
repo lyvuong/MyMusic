@@ -34,6 +34,8 @@ export interface FamilyInfo {
 /** One Beets import on the home server, requested from the web app. */
 export interface BeetsRun {
   id: string;
+  /** 'import' is the Organize button; 'enrich' is the nightly art/genre job. */
+  kind: "import" | "enrich";
   status: "requested" | "running" | "done" | "failed";
   requestedAt: number;
   startedAt: number | null;

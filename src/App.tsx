@@ -527,7 +527,7 @@ function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
   useEffect(() => {
     void (async () => {
       await refreshRuns();
-      const open = organizeState.runs.find((r) => r.status === "requested" || r.status === "running");
+      const open = organizeState.runs.find((r) => r.kind === "import" && (r.status === "requested" || r.status === "running"));
       if (open) void followRun(open, () => sync.current());
     })();
   }, []);
@@ -559,8 +559,8 @@ function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
           <ul>
             {runs.map((r) => (
               <li key={r.id}>
-                <strong>{r.status}</strong> <small className="muted">{when(r.requestedAt)}</small>
-                {r.inboxBefore !== null && r.inboxAfter !== null && (
+                <strong>{r.kind === "enrich" ? "Nightly enrich" : "Import"}: {r.status}</strong> <small className="muted">{when(r.requestedAt)}</small>
+                {r.kind === "import" && r.inboxBefore !== null && r.inboxAfter !== null && (
                   <small className="muted"> · inbox {r.inboxBefore} → {r.inboxAfter} files</small>
                 )}
                 {r.log && (
