@@ -290,7 +290,18 @@ app.get("/api/server/status", async (c) => c.json(await homeStatus(c.env)));
 async function startOnHome(c: import("hono").Context<{ Bindings: Env; Variables: Vars }>, kind: "import" | "enrich") {
   if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
   if (!homeConfigured(c.env)) return c.json({ error: "The home server API is not configured." }, 501);
-  const { run, created } = await beginRun(c.env.DB, c.get("family").familyId, c.get("user").uid, kind);
+  const fam = c.get("family").familyId;
+  const uid = c.get("user").uid;
+  let { run, created } = await beginRun(c.env.DB, fam, uid, kind);
+  if (!created) {
+    // A run is marked running, but if the server says it is not doing that job (it was restarted, or its report was lost)
+    // the record is stale: close it and start again instead of making the owner wait for the 2 hour timeout.
+    const st = await homeStatus(c.env);
+    if (st.ok && st.busy !== kind) {
+      await failRun(c.env.DB, run.id, "The server is no longer running this job (it restarted or its report was lost).");
+      ({ run, created } = await beginRun(c.env.DB, fam, uid, kind));
+    }
+  }
   if (created) {
     try {
       await homeStartJob(c.env, run.id, kind);
