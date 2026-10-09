@@ -152,6 +152,8 @@ def worker_post(path, query=None, body=None, tries=1):
     for attempt in range(tries):
         req = urllib.request.Request(url, data=body if body is not None else b"", method="POST")
         req.add_header("X-Agent-Key", KEY)
+        # urllib's default "Python-urllib" signature is blocked by Cloudflare's browser check (403, error 1010).
+        req.add_header("User-Agent", "mymusic-api/1.0 (+home server)")
         if body is not None:
             req.add_header("Content-Type", "text/plain; charset=utf-8")
         try:
@@ -191,7 +193,9 @@ def run_import(run_id):
     """The Organize button: pass 1 groups files into albums by their tags, pass 2 imports leftovers one by one.
     Only musicbrainz, scrub and fromfilename load, so it is fast; enrich adds art and genres."""
     before = count_inbox()
-    worker_post("/api/beets/agent/progress", {"id": run_id, "before": before, "now": before})
+    log("import %s: %d file(s) in %s" % (run_id, before, INBOX))
+    if not worker_post("/api/beets/agent/progress", {"id": run_id, "before": before, "now": before}):
+        log("import %s: the Worker did not accept progress; the web app will show no progress bar" % run_id)
     out = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
     exit_code = 0
     try:
@@ -394,4 +398,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     log("mymusic-api listening on :%d (worker %s, container %s)" % (PORT, WORKER, BEETS))
+    if not os.path.isdir(INBOX):
+        log("WARNING: %s does not exist; mount the inbox (see README) or the progress bar will stay empty" % INBOX)
+    else:
+        log("inbox %s holds %d file(s)" % (INBOX, count_inbox()))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
