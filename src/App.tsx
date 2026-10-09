@@ -1,5 +1,5 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { BeetsRun, FamilyInfo, Playlist, Track } from "../shared/types";
 import { api } from "./api";
 import { ArtistPic, Cover } from "./art";
@@ -130,6 +130,13 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
   const [q, setQ] = useState("");
   const [view, setView] = useState<View>("albums");
   const [open, setOpen] = useState<{ kind: "album" | "artist"; key: string } | null>(null);
+  // The list unmounts while an album or artist is open, so remember where it was scrolled to and go back there.
+  const listScroll = useRef(0);
+  const openItem = (o: { kind: "album" | "artist"; key: string }) => {
+    listScroll.current = window.scrollY;
+    setOpen(o);
+  };
+  useLayoutEffect(() => window.scrollTo(0, open ? 0 : listScroll.current), [open]);
   const filtered = useMemo(() => {
     const s = q.toLowerCase();
     return tracks.filter((t) => !s || `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(s));
@@ -317,20 +324,20 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
             <section>
               <h3>Recently added</h3>
               <div className="strip">
-                {recent.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => setOpen({ kind: "album", key: a.key })} />)}
+                {recent.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => openItem({ kind: "album", key: a.key })} />)}
               </div>
               <h3>All albums <small>{albums.length}</small></h3>
             </section>
           )}
           <div className="grid">
-            {albums.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => setOpen({ kind: "album", key: a.key })} />)}
+            {albums.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => openItem({ kind: "album", key: a.key })} />)}
           </div>
           {albums.length === 0 && <p className="muted">No albums match.</p>}
         </>
       ) : view === "artists" ? (
         <>
           <div className="grid">
-            {artists.map((a) => <ArtistCard key={a.name} artist={a} onOpen={() => setOpen({ kind: "artist", key: a.name })} />)}
+            {artists.map((a) => <ArtistCard key={a.name} artist={a} onOpen={() => openItem({ kind: "artist", key: a.name })} />)}
           </div>
           {artists.length === 0 && <p className="muted">No artists match.</p>}
         </>
