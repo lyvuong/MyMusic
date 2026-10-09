@@ -503,7 +503,7 @@ async function followRun(first: BeetsRun, syncNas: () => Promise<boolean>) {
     const deadline = Date.now() + 40 * 60 * 1000;
     while (run.status === "requested" || run.status === "running") {
       if (Date.now() > deadline) throw new Error("Gave up waiting for the server. Check the Unraid script.");
-      setOrganize({ msg: run.status === "requested" ? "Waiting for the server to pick it up (up to a minute)…" : "Beets is importing…", active: run });
+      setOrganize({ msg: run.status === "requested" ? "Waiting for the server to pick it up (up to a minute)…" : run.kind === "enrich" ? "Beets is adding art and genres…" : "Beets is importing…", active: run });
       await sleep(3000);
       const { runs: latest } = await api.beetsRuns();
       setOrganize({ runs: latest });
@@ -537,7 +537,7 @@ function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
   useEffect(() => {
     void (async () => {
       await refreshRuns();
-      const open = organizeState.runs.find((r) => r.kind === "import" && (r.status === "requested" || r.status === "running"));
+      const open = organizeState.runs.find((r) => (r.kind === "import" || r.status === "requested") && (r.status === "requested" || r.status === "running"));
       if (open) void followRun(open, () => sync.current());
     })();
   }, []);
@@ -550,10 +550,19 @@ function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
     }
   };
 
+  const enrich = async () => {
+    try {
+      await followRun(await api.runEnrich(), () => sync.current());
+    } catch (e) {
+      setOrganize({ msg: e instanceof Error ? e.message : "Failed" });
+    }
+  };
+
   return (
     <>
       <p>
         <button disabled={busy} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
+        <button disabled={busy} onClick={() => void enrich()} title="Fetch missing cover art and genres now, like the nightly job">Run enrich now</button>{" "}
         {busy && <span className="spinner" aria-hidden="true" />}
         <small className="muted" role="status">{msg}</small>
       </p>

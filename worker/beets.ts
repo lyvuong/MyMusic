@@ -94,6 +94,31 @@ export async function startEnrich(db: D1Database): Promise<string | null> {
   return id;
 }
 
+/** Queues a manual enrich run (for a night that did not run), or returns the one already waiting or in progress. */
+export async function requestEnrich(db: D1Database, familyId: string, uid: string): Promise<BeetsRun> {
+  const now = Date.now();
+  await db.prepare("UPDATE beets_runs SET status = 'failed', finished_at = ?, log = 'Timed out: no report from the server.' WHERE family_id = ? AND kind = 'enrich' AND status IN ('requested','running') AND requested_at < ?")
+    .bind(now, familyId, now - ENRICH_STALE_MS).run();
+  const open = await db.prepare("SELECT * FROM beets_runs WHERE family_id = ? AND kind = 'enrich' AND status IN ('requested','running') ORDER BY requested_at DESC LIMIT 1")
+    .bind(familyId).first<RunRow>();
+  if (open) return toRun(open);
+  const id = crypto.randomUUID();
+  await db.batch([
+    db.prepare("INSERT INTO beets_runs (id, family_id, kind, status, requested_by, requested_at) VALUES (?, ?, 'enrich', 'requested', ?, ?)").bind(id, familyId, uid, now),
+    pruneRuns(db, familyId, "enrich"),
+  ]);
+  return toRun((await db.prepare("SELECT * FROM beets_runs WHERE id = ?").bind(id).first<RunRow>())!);
+}
+
+/** Hands a requested enrich run to the polling script and marks it running; null when nothing is waiting. */
+export async function claimEnrich(db: D1Database): Promise<string | null> {
+  const r = await db.prepare(
+    "UPDATE beets_runs SET status = 'running', started_at = ? " +
+      "WHERE id = (SELECT id FROM beets_runs WHERE kind = 'enrich' AND status = 'requested' ORDER BY requested_at LIMIT 1) AND status = 'requested' RETURNING id",
+  ).bind(Date.now()).first<{ id: string }>();
+  return r?.id ?? null;
+}
+
 /** Constant-time comparison of the polling script's shared key. */
 export function agentKeyOk(env: Env, given: string | undefined): boolean {
   const key = env.BEETS_AGENT_KEY;

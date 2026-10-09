@@ -3,7 +3,7 @@ import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
 import { findAlbumArt, findArtistImage } from "./artwork";
 import { delta, savePlaylist } from "./library";
-import { agentKeyOk, claimRun, finishRun, listRuns, requestRun, startEnrich, updateProgress } from "./beets";
+import { agentKeyOk, claimEnrich, claimRun, finishRun, listRuns, requestEnrich, requestRun, startEnrich, updateProgress } from "./beets";
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { ingest } from "./upload";
 
@@ -35,7 +35,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/runs", "/api/family/invites"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/family/invites"]) {
   app.use(p, needFamily);
 }
 
@@ -204,6 +204,20 @@ app.post("/api/beets/run", async (c) => {
 app.post("/api/beets/agent/poll", async (c) => {
   if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
   const id = await claimRun(c.env.DB);
+  return id ? c.text(id) : c.body(null, 204);
+});
+
+/** Requests an enrich run now (owner only), e.g. when the nightly one did not happen; beets-agent.sh picks it up. */
+app.post("/api/beets/enrich", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  if (!c.env.BEETS_AGENT_KEY) return c.json({ error: "Beets runs are not configured" }, 501);
+  return c.json(await requestEnrich(c.env.DB, c.get("family").familyId, c.get("user").uid), 201);
+});
+
+/** Polled by beets-agent.sh after the import poll: the id of a requested enrich run (now marked running) as text, or 204. */
+app.post("/api/beets/agent/poll-enrich", async (c) => {
+  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
+  const id = await claimEnrich(c.env.DB);
   return id ? c.text(id) : c.body(null, 204);
 });
 

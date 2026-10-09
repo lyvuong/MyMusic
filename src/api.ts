@@ -61,6 +61,7 @@ export const api = {
   nasScanning: () => call<{ scanning: boolean }>("GET", "/api/nas/scan"),
   beetsRuns: () => call<{ runs: BeetsRun[] }>("GET", "/api/beets/runs"),
   runBeets: () => call<BeetsRun>("POST", "/api/beets/run"),
+  runEnrich: () => call<BeetsRun>("POST", "/api/beets/enrich"),
   fetchArt: () => call<{ updated: number; remaining: number }>("POST", "/api/art/fetch"),
   deleteTrack: (id: string) => call<void>("DELETE", `/api/tracks/${id}`),
 

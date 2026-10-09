@@ -20,7 +20,31 @@ exec 9>/tmp/mymusic-agent.lock
 flock -n 9 || exit 0
 
 ID=$(curl -fsS --max-time 20 -X POST -H "X-Agent-Key: $KEY" "$API/api/beets/agent/poll") || exit 0
-[ -n "$ID" ] || exit 0                   # 204: nothing requested
+if [ -z "$ID" ]; then                    # 204: no import requested; maybe a manual enrich ("Run enrich now")
+  ID=$(curl -fsS --max-time 20 -X POST -H "X-Agent-Key: $KEY" "$API/api/beets/agent/poll-enrich") || exit 0
+  [ -n "$ID" ] || exit 0
+
+  # Same steps as beets-enrich.sh (the nightly job); keep the two in sync.
+  LOG=$(mktemp)
+  flock -w 3600 /tmp/beets-import.lock sh -c '
+    E=0
+    echo "=== $(date "+%Y-%m-%d %H:%M:%S") enrich start (manual) ==="
+    docker exec beets beet fetchart || E=$?
+    docker exec beets beet embedart -y "added:-14d.." || E=$?
+    docker exec beets beet lastgenre || E=$?
+    echo "=== $(date "+%Y-%m-%d %H:%M:%S") enrich done (exit $E) ==="
+    exit $E' > "$LOG" 2>&1
+  EXIT=$?
+  cat "$LOG" >> "/mnt/user/appdata/beets/enrich.log"
+  OK=0; [ "$EXIT" -eq 0 ] && OK=1
+  for try in 1 2 3; do
+    tail -c 6000 "$LOG" | curl -fsS --max-time 30 -X POST -H "X-Agent-Key: $KEY" -H "Content-Type: text/plain" \
+      --data-binary @- "$API/api/beets/agent/report?id=$ID&ok=$OK&exit=$EXIT" > /dev/null 2>&1 && break
+    sleep 10
+  done
+  rm -f "$LOG"
+  exit 0
+fi
 
 count() { find "$INBOX" -type f 2>/dev/null | wc -l; }
 

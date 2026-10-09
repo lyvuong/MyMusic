@@ -118,6 +118,8 @@ One-time setup:
 4. The Navidrome user in `NAS_USER` must be an **admin**, or "start scan" is refused and the button stops after Beets finishes.
 5. Push to `main`: CI applies migration `0005_beets_runs.sql` and deploys the Worker and web app.
 
+**Run enrich now** (next to the Organize button) queues a manual enrich run for when the nightly `beets-enrich.sh` did not happen. `beets-agent.sh` picks it up through `/api/beets/agent/poll-enrich` (after checking for an import), runs the same `fetchart` / `embedart` / `lastgenre` steps under the import lock and reports it in "Beets history". Re-paste `beets-agent.sh` into User Scripts after updating it.
+
 Notes: the agent shares `/tmp/beets-import.lock` with the 15-minute scheduled import, so the two never overlap; the agent takes only one run at a time. A run that never reports back (server or script died) is marked failed after 2 hours. Imports are quiet (`-q`) and cannot ask questions; anything that needs a human choice still goes through Mp3tag or `beet import -L` in a terminal. The agent endpoints (`/api/beets/agent/*`) skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
 
 ## Local development
