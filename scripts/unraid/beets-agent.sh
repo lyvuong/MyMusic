@@ -27,7 +27,14 @@ count() { find "$INBOX" -type f 2>/dev/null | wc -l; }
 LOG=$(mktemp)
 BEFORE=$(count)
 # Wait (up to an hour) if the scheduled import is running, so two imports never overlap.
-flock -w 3600 /tmp/beets-import.lock docker exec beets beet import -g -q /downloads > "$LOG" 2>&1
+# Pass 1 groups files into albums by their tags. Pass 2 imports what is still in the inbox one by one: untagged
+# files all share a blank artist/album, so pass 1 skips all but the first as "already in the library".
+flock -w 3600 /tmp/beets-import.lock sh -c '
+  docker exec beets beet import -g -q /downloads
+  E=$?
+  echo "--- second pass: leftovers as single tracks ---"
+  docker exec beets beet import -s -q /downloads || E=$?
+  exit $E' > "$LOG" 2>&1
 EXIT=$?
 AFTER=$(count)
 cat "$LOG" >> "$IMPORT_LOG"
