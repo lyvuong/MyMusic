@@ -136,7 +136,9 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
     listScroll.current = window.scrollY;
     setOpen(o);
   };
-  useLayoutEffect(() => window.scrollTo(0, open ? 0 : listScroll.current), [open]);
+  useLayoutEffect(() => {
+    window.scrollTo(0, open ? 0 : listScroll.current);
+  }, [open]);
   const filtered = useMemo(() => {
     const s = q.toLowerCase();
     return tracks.filter((t) => !s || `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(s));
