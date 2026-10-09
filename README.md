@@ -7,12 +7,21 @@
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)
 ![Navidrome](https://img.shields.io/badge/Navidrome-NAS-0084ff)
 
-A family music app: Android app (with Android Auto and offline downloads), a web player, and a Cloudflare Worker backend.
+A family music app: Android app (with Android Auto and offline downloads), a web player, and a Cloudflare Worker backend that sits in front of a Navidrome server on a home NAS.
 
-- `worker/`: Hono Worker. Firebase sign-in, families (D1), library, playlists, library sync and Range streaming from a Navidrome NAS (through a Cloudflare Tunnel), app releases.
+What it does:
+- Play the family library on the phone and the web, with playlists (private or shared), offline downloads and Android Auto.
+- Rate songs 1-5 stars and get AI suggestions (a playlist from your library plus artists to discover, optionally for a mood).
+- Edit song, album and artist names (including merging albums and artists); the new names are written into the files on the home server.
+- Organize the music inbox with Beets from the web app, and run the cover/genre enrich on demand.
+
+Parts:
+- `worker/`: Hono Worker. Firebase sign-in, families (D1), library, playlists, ratings, AI suggestions, library sync and Range streaming from Navidrome (through a Cloudflare Tunnel), name editing and Beets runs (through the home server API), app releases.
 - `src/`: web player (React + Vite PWA), served by the Worker as static assets.
-- `flutter/`: Android app (`audio_service` + `just_audio`, Android Auto browse tree, offline downloads).
-- `.github/workflows/ci.yml`: checks on every push; on `main` it deploys the Worker and publishes a signed APK.
+- `flutter/`: Android app (`audio_service` + `just_audio`, Android Auto browse tree, offline downloads, ratings, For you).
+- `scripts/unraid/`: everything that runs on the home server (see "Home server").
+- `migrations/`: D1 schema, applied by CI on every push to `main`.
+- `.github/workflows/ci.yml`: checks on every push; on `main` it applies migrations, deploys the Worker and publishes a signed APK.
 
 ## One-time setup
 
@@ -32,89 +41,56 @@ A family music app: Android app (with Android Auto and offline downloads), a web
    - Variables: `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID`.
    - Secrets: `CLOUDFLARE_API_TOKEN` (Workers, D1, R2 edit), `CLOUDFLARE_ACCOUNT_ID`, `ANDROID_KEYSTORE_BASE64` (`base64 -w0 mymusic.jks`), `ANDROID_KEYSTORE_PASSWORD`, `GOOGLE_SERVICES_JSON_BASE64`.
 5. Edit `flutter/config/production.json` with your Worker URL and Google web client ID.
+6. Connect the home server: see "Home server" below (Navidrome, then the `mymusic-api` container).
 
-## Home server (Unraid: Navidrome, File Browser, Beets)
+## Worker configuration
 
-Host `Lincoln-Unraid`. Music lives in the share `/mnt/user/Music`. The Worker only talks to Navidrome (Subsonic API, via a Cloudflare Tunnel, see `NAS_*` in `worker/env.d.ts`). Never put passwords or tokens in this file.
+| Name | Kind | Purpose |
+|---|---|---|
+| `FIREBASE_PROJECT_ID` | var | Verifies Firebase ID tokens |
+| `NAS_BASE_URL` | var | Navidrome through its tunnel hostname; empty disables the NAS |
+| `NAS_USER`, `NAS_PASSWORD` | secrets | Navidrome login; the user must be an **admin** (the app starts library scans) |
+| `NAS_CF_ACCESS_ID`, `NAS_CF_ACCESS_SECRET` | secrets | Cloudflare Access service token, sent to Navidrome and to the home server API |
+| `HOME_API_URL` | var | The `mymusic-api` tunnel hostname (`https://mymusic-api.lv5.uk`); empty disables Organize, enrich and name editing |
+| `BEETS_AGENT_KEY` | secret | Shared key between the Worker and the home server (both directions) |
+| `AI` | binding | Workers AI for suggestions (free daily allowance, no key) |
+| `DB`, `MUSIC`, `RELEASES` | bindings | D1 database and the two R2 buckets |
 
-Flow: drop files in `/mnt/user/Music/_inbox` (File Browser) -> Beets organizes them into `/mnt/user/Music/Artist/Album/` -> Navidrome rescans -> sync the NAS in the web player (owner) -> the app shows them.
+## Home server (Unraid: Navidrome, File Browser, Beets, mymusic-api)
+
+Host `Lincoln-Unraid`. Music lives in the share `/mnt/user/Music`. The Worker talks to two things there, both through Cloudflare Tunnels: Navidrome (Subsonic API, `NAS_*`) and the `mymusic-api` container (`HOME_API_URL`). Never put passwords or tokens in this file.
+
+Flow: drop files in `/mnt/user/Music/_inbox` (File Browser) -> press **Organize** in the web app -> Beets organizes them into `/mnt/user/Music/Artist/Album/` -> Navidrome rescans -> the app syncs the library and shows them.
+
+### Compose stack
+One `compose.yaml` runs four containers: `navidrome`, `filebrowser`, `beets` and `mymusic-api` (all `restart: unless-stopped`; `:latest` images except `mymusic-api`, which is `python:3.12-alpine` running the script from the repo). Beets runs as root (`PUID=0`, `PGID=0`, `TZ=America/New_York`) like File Browser, so it can write to files File Browser uploaded.
 
 ### Beets (container `beets`, image `lscr.io/linuxserver/beets:latest`)
 - Mounts: `/mnt/user/appdata/beets` -> `/config`, `/mnt/user/Music` -> `/music`, `/mnt/user/Music/_inbox` -> `/downloads`.
-- Config: `/mnt/user/appdata/beets/config.yaml` (library `/config/musiclibrary.blb`, log `/config/beet.log`). Library directory `/music`.
-- Plugins: `musicbrainz fetchart embedart scrub lastgenre`. Paths: `$albumartist/$album%aunique{}/$track - $title`; singles go to `Non-Album/$artist - $title` (only for `-s` singleton imports; the scheduled job uses `-g`, so loose files are grouped as albums by their tags); compilations to `Compilations/...`.
-- Import settings: `copy: no`, `move: yes` (files LEAVE `_inbox` once imported), `quiet_fallback: asis`, `resume: no`, `incremental: no`, `strong_rec_thresh: 0.15`. `asis` is needed: with `skip`, quiet mode silently skipped everything beets could not match.
-- Old scheduled job (now **disabled**; imports run only from the web app's Organize button via the `mymusic-api` container, see "Beets runs from the web app"). Kept for reference; User Scripts plugin, script `OrganizeMusicFiles`, ran every 15 minutes:
-  ```bash
-  #!/bin/bash
-  flock -n /tmp/beets-import.lock \
-    docker exec beets beet import -g -q /downloads >> /mnt/user/appdata/beets/auto-import.log 2>&1
-  ```
-  Paths in the command are container paths (`/downloads`, not `_inbox`). `flock -n` makes a run exit instantly while a previous import still holds the lock (a long run makes the next runs "finish" in 0 seconds; that is normal). Check with `docker exec beets pgrep -a beet`. A running `beet` reads the config only at start; restart the container after editing `config.yaml`.
-- Matching notes: beets matches on existing tags/filenames via MusicBrainz (about 1 request/s, so big batches are slow). Files with junk tags (`05. Track 5.mp3`), loose single tracks, and many Vietnamese songs (diacritics stripped, weak coverage) do not match and are imported as-is as albums under whatever tags they carry (empty tags end up under an `Unknown Artist`/empty-album folder, not `Non-Album/`). Find them with `docker exec beets beet ls -f '$artist | $album | $title | $path'` and queries like `albumartist::^$` or `album::^$`.
-- Chroma (audio fingerprinting): the `chroma` plugin identifies songs with junk tags/filenames via Chromaprint + AcoustID, which plain tag matching cannot. The image already has `/usr/bin/fpcalc` and `pyacoustid`, so no installs are needed. Setup: add `chroma` to `plugins:` (`musicbrainz chroma fetchart embedart scrub lastgenre`), add `chroma:` with `auto: yes`, then `docker restart beets` and confirm with `docker exec beets beet version`. Adds one lookup per file (slower imports). It cannot help for recordings MusicBrainz/AcoustID do not know (many Vietnamese songs). Re-match existing as-is files with `docker exec -it beets beet import -L album::^$` (or a query on the folder/artist you find with `beet ls`).
-- Album art (fetchart/embedart): both run automatically on import only. `fetchart: auto: yes, minwidth: 500` (smaller covers are rejected); `embedart: auto: yes`; cover file name `cover` (`art_filename`). For albums already in the library run `docker exec beets beet fetchart` (add `-f` to replace existing covers, or a query like `albumartist:"Paul Simon"`), then `docker exec beets beet embedart` to write the cover into the files. Rescan Navidrome and re-sync the app afterwards. Albums that match nothing get no cover; the web player's "Find missing covers online" button (iTunes search) fills those in.
-- Two-run setup (fast import, nightly enrich): the Organize button (`scripts/unraid/mymusic-api`) runs `beet -p musicbrainz,scrub,fromfilename import ...`, so `fetchart`, `embedart` and `lastgenre` do NOT run during the import (`-p` overrides `plugins:` in `config.yaml`). `scripts/unraid/beets-enrich.sh` is a second User Scripts job, custom cron `0 3 * * *`, that runs `beet fetchart`, `beet embedart -y 'added:-14d..'` and `beet lastgenre` with the full plugin list, logging to `/mnt/user/appdata/beets/enrich.log`. It shares `/tmp/beets-import.lock`, so it waits for a running import. It also reports each night to the Worker (`/api/beets/agent/enrich-start` and `/report`, same key file as the agent, migration `0007`), so the Family tab's "Beets history" lists it as "Nightly enrich" with its log; a night that is still waiting shows as `running`. Paste the updated script into User Scripts after deploying. Check `-p` works with `docker exec beets beet -p musicbrainz,scrub,fromfilename version` (should list only those two).
-- Later clean-up: `beet import -L [query]` re-matches albums already in the library; after retagging run `beet update` then `beet move`. Rescan Navidrome and re-sync the app afterwards.
+- Config: `/mnt/user/appdata/beets/config.yaml` (library `/config/musiclibrary.blb`, log `/config/beet.log`). Library directory `/music`. A running `beet` reads the config only at start; restart the container after editing it.
+- Plugins: `musicbrainz fetchart embedart scrub lastgenre` (plus `fromfilename`, used by the Organize import). Paths: `$albumartist/$album%aunique{}/$track - $title`; singles go to `Non-Album/%if{$artist,$artist - }$title` (only for `-s` singleton imports); compilations to `Compilations/...`.
+- Import settings: `copy: no`, `move: yes` (files LEAVE `_inbox` once imported), `quiet_fallback: asis`, `resume: no`, `incremental: no`, `strong_rec_thresh: 0.15`. `asis` is needed: with `skip`, quiet mode silently skipped everything beets could not match. The skip reasons are written to `/config/skipped.log` (`-l`).
+- Two-run setup (fast import, nightly enrich):
+  - **Import** (the Organize button, run by `mymusic-api`): `beet -p musicbrainz,scrub,fromfilename import -g -q /downloads`, then `-s -q` for leftovers. `-p` overrides `plugins:`, so `fetchart`, `embedart` and `lastgenre` do not run and the import stays fast. Pass 1 groups files into albums by their tags; pass 2 imports what is left one by one, because untagged files all share a blank artist and album and would otherwise be skipped as "already in the library".
+  - **Enrich** adds what the import skipped, for albums already in the library: `beet fetchart`, `beet embedart -y 'added:-14d..'` (writes the cover into recent files only) and `beet lastgenre`, with the full plugin list. It runs nightly from `scripts/unraid/beets-enrich.sh` (a User Scripts job, custom cron `0 3 * * *`, log `/mnt/user/appdata/beets/enrich.log`) and on demand from **Run enrich now** in the web app. It reports each run to the Worker (`/api/beets/agent/enrich-start` and `/report`, with the same key file as `mymusic-api`), so the Family tab's "Beets history" lists it with its log. Paste an updated `beets-enrich.sh` into User Scripts after changing it.
+  - Both share `/tmp/beets-import.lock`, so they never overlap. Check what is running with `docker exec beets pgrep -a beet` (the `beet web` line is only the Beets browser UI and is not needed).
+- Matching notes: beets matches on existing tags/filenames via MusicBrainz (about 1 request/s, so big batches are slow). Files with junk tags (`05. Track 5.mp3`), loose single tracks, and many Vietnamese songs (diacritics stripped, weak coverage) do not match and are imported as-is under whatever tags they carry (empty tags end up under an `Unknown Artist`/empty-album folder, not `Non-Album/`). Find them with `docker exec beets beet ls -f '$artist | $album | $title | $path'` and queries like `albumartist::^$` or `album::^$`. Fix them by renaming in the web app, in Mp3tag, or with `beet modify`; `beet import -L [query]` re-matches albums already in the library, then run `beet update` and `beet move`.
+- Chroma (audio fingerprinting): the `chroma` plugin identifies songs with junk tags/filenames via Chromaprint + AcoustID. The image already has `/usr/bin/fpcalc` and `pyacoustid`. Setup: add `chroma` to `plugins:`, add `chroma:` with `auto: yes`, then `docker restart beets` and confirm with `docker exec beets beet version`. It adds one lookup per file (slower imports) and cannot help for recordings MusicBrainz/AcoustID do not know (many Vietnamese songs).
+- Album art: `fetchart: auto: yes, minwidth: 500` (smaller covers are rejected); `embedart: auto: yes`; cover file name `cover` (`art_filename`). For a one-off run on existing albums: `docker exec beets beet fetchart` (add `-f` to replace existing covers, or a query like `albumartist:"Paul Simon"`), then `beet embedart`. Albums that match nothing get no cover; the web player's "Find missing covers online" button (iTunes search) fills those in.
 
-### Compose stack
-One `compose.yaml` runs three containers: `navidrome`, `filebrowser`, `beets` (all `restart: unless-stopped`, all `:latest` images). Beets runs as root (`PUID=0`, `PGID=0`, `TZ=America/New_York`) like File Browser, so it can write to files File Browser uploaded.
+### mymusic-api (container `mymusic-api`): what the web app asks the server to do
+A small Python service (`scripts/unraid/mymusic-api/server.py`, standard library only) that runs `docker exec beets ...` for the web app. The Worker calls it through a Cloudflare Tunnel, like it calls Navidrome, protected by the Cloudflare Access service token plus the shared key (`BEETS_AGENT_KEY`, header `X-Agent-Key`). Nothing polls. The endpoints are fixed and no command or path comes from a request:
 
-### Fixes applied to the server (Oct 8, 2026) and troubleshooting
-1. **Nothing was organized**: `config.yaml` had `quiet_fallback: skip`, so the scheduled `-q` import silently skipped every album beets could not confidently match. Changed to `quiet_fallback: asis` and `resume: ask` -> `resume: no` (a scheduled job cannot answer prompts). Backup of the old file: `config.yaml.bak`.
-2. **Scheduled runs "finished" in 0 seconds**: the first import (started with the old config) was still running and held `/tmp/beets-import.lock`, so `flock -n` skipped every later run. Fixed with `docker restart beets` and running the script again. Beets reads `config.yaml` only at start, so always restart the container (or wait for the running import) after editing it.
-3. **Slow imports**: MusicBrainz is rate limited (~1 request/s) and `fetchart`/`lastgenre` add a lookup per album. Optional speed-up while sorting a big inbox: `plugins: musicbrainz scrub`.
-4. **Albums with junk tags** (`05. Track 5.mp3`, `- Unknown 2 -.mp3`, many Vietnamese songs) import as-is. Fix them later by retagging (Mp3tag or `beet modify`), then `beet import -L`, `beet update`, `beet move`.
-5. **Grayed-out album with "?"**: Navidrome missing files; see the Navidrome section below.
-6. **Untagged files stay in `_inbox` ("This album is already in the library! Skipping.")**: songs with no tags all have a blank artist and album, so after the first as-is import every other one looks like a duplicate of it. They are not real duplicates (checked by checksum). Fix: add the `fromfilename` plugin (title from the file name) and import them as singletons: `beet import -s -q /downloads`. The `singleton` path is `Non-Album/%if{$artist,$artist - }$title` so a missing artist does not give ` - Title.mp3`. The skip reasons are in the log written by `-l /config/skipped.log`. the `mymusic-api` service (the web app's Organize button) now runs that `-s` pass automatically after the `-g` pass (the old 15-minute scheduled job is disabled).
-7. **Tags cannot be written over SMB (Mp3tag "cannot write")**: Beets runs as root, so imported files are `root:root` with `rw-r-----` and the SMB user `nobody` cannot write them. Fix: `chown -R nobody:users /mnt/user/Music && chmod -R u+rwX,g+rwX,o+rX /mnt/user/Music` (the same as Tools -> New Permissions), only while no import is running. To stop it coming back, set `PUID=99` and `PGID=100` on the `beets` service. In Mp3tag use ID3v2.3 with UTF-16 so Vietnamese text reads correctly everywhere.
-8. **Two import processes at once** (an old scheduled script plus a manual run) fight over the same files. Check with `docker exec beets pgrep -a beet`; the `beet web` line is only the Beets browser UI and is not needed.
-9. **Same artist in two folders by capitalisation** ("Berlin Orchestra" / "Berlin orchestra"): see the next section.
+| Endpoint | What it does |
+|---|---|
+| `GET /health` | Checks the `beets` container answers; used by the app to enable or disable the features below |
+| `POST /edit` | Writes edited names into the files and the Beets library, and waits for the result |
+| `POST /jobs` | Starts an `import` or an `enrich` and returns at once; progress and result are posted back to the Worker (`/api/beets/agent/progress` and `/report`) under the run id |
 
-### Fixing ASCII-typed Vietnamese in tags
-`scripts/unraid/fix-vietnamese.py` (runs in the `beets` container, preview unless `--apply`) decodes VIQR-style text in titles, artists and albums: `o*`/`o+` -> ơ, `u*`/`u+` -> ư, `a(` -> ă, `a^ e^ o^` -> â ê ô, `dd`/`d-` -> đ, tones `` ` ' ? ~ . ``, and `_20` -> space. Only fields with clear markers (`a^`, `o*`, `u+`, a backtick after a vowel, a word starting `dd`) are touched, so English titles stay as they are. File names cannot contain `'`, `(` or `?`, so those marks became `_` and are lost: such fields are decoded as far as possible and listed in `/config/vietnamese-review.txt` for hand editing in Mp3tag. `--apostrophes` also restores `_` to `'` in English titles (`Let_s` -> `Let's`).
-
-```bash
-docker exec -i beets /lsiopy/bin/python3 - < /mnt/user/appdata/beets/fix-vietnamese.py            # preview
-docker exec -i beets /lsiopy/bin/python3 - --apply < /mnt/user/appdata/beets/fix-vietnamese.py    # do it
-```
-Beets renames and moves the files to match the new tags; then press **Organize** in the web app. Songs imported with blank tags (`00 -.mp3`) have nothing to decode.
-
-### Merging artists that differ only by capitals
-`scripts/unraid/merge-artist-case.py` runs inside the `beets` container. It lists every artist and album artist whose spelling differs only by case, keeps the most-used spelling and has Beets retag the others and move the files into one folder. It is a preview unless `--apply` is given, and refuses to run during an import. Copy it to `/mnt/user/appdata/beets/merge-artist-case.py`, then:
-
-```bash
-docker exec -i beets python3 - < /mnt/user/appdata/beets/merge-artist-case.py            # preview
-docker exec -i beets python3 - --apply < /mnt/user/appdata/beets/merge-artist-case.py    # do it
-```
-
-Afterwards press **Organize inbox and update library** in the web app (Navidrome rescan and sync). If both folders held the same songs, each song now exists twice in the merged folder; find them with `beet ls -f '$title | $length' albumartist:"Name" | sort` and remove the extras with `beet remove`.
-
-### Navidrome (container `navidrome`, image `deluan/navidrome:latest`)
-- Port `4533`. Data/db/cache: `/mnt/user/appdata/navidrome` -> `/data`. Music: `/mnt/user/Music` -> `/music` **read-only** (it never writes tags or deletes files).
-- Env: `ND_LOGLEVEL=info`, `ND_BASEURL=""`, `ND_IMAGECACHESIZE=1000MB`, `ND_ENABLESHARING=true`, `ND_SCANSCHEDULE=1h` (new files can take up to an hour to appear unless you trigger a rescan from the UI).
-- It scans all of `/music`, so files still waiting in `_inbox` are visible too. Excluding `_inbox` is not set up yet.
-- The Worker reaches it through a Cloudflare Tunnel (`NAS_BASE_URL`, optional Cloudflare Access service token `NAS_CF_ACCESS_*`; tunnel hostname not recorded here).
-- Albums grayed out with a "?" are Navidrome's missing-files marker (files gone from disk). Remove them under user menu -> Missing Files (0.55+), then rescan.
-
-### Editing tags (Mp3tag on the laptop)
-- Tags are edited with Mp3tag on Windows over the SMB share `\\Lincoln-Unraid\Music` (File Browser cannot edit tags). Picard was tried and dropped: its web UI cannot type Vietnamese. It is no longer in the compose stack.
-- Mp3tag: Tools -> Options -> Tags -> Mpeg, write **ID3v2.3 with UTF-16** so Vietnamese reads correctly in Navidrome and on Android. Writing needs the files to be writable by `nobody` (see troubleshooting item 7 above).
-- After editing: `docker exec beets beet update` (re-reads tags), `beet move` if the names changed, then press **Organize** in the web app. Do not edit while a Beets import is running. Quick fixes without a laptop: `beet modify` / `beet edit`.
-
-### File Browser (container `filebrowser`, image `filebrowser/filebrowser:latest`)
-- Port `8080` -> container `80`. Runs as `user: "0:0"` to bypass Unraid permission lockouts; healthcheck disabled.
-- Root `/srv` = the whole `/mnt/user/Music` share, so uploads go to `/srv/_inbox` (host `/mnt/user/Music/_inbox`). Database: `/mnt/user/appdata/filebrowser` -> `/database`; config: `/mnt/user/appdata/filebrowser/config` -> `/config`.
-- Reached on the LAN (no tunnel recorded here).
-
-### Beets runs from the web app (the `mymusic-api` container)
-
-Family tab (owner only) -> **Organize inbox and update library**: runs Beets on the inbox, starts a Navidrome scan, runs "Sync music from NAS", and shows the status and a log tail ("Beets history"). **Run enrich now** does the nightly cover/genre job on demand. Editing names (below) uses the same server.
-
-How it works: a small Python API (`scripts/unraid/mymusic-api/server.py`) runs in a container on Unraid. The Worker calls it through a Cloudflare Tunnel, exactly like it calls Navidrome, protected by the Cloudflare Access service token plus the shared key (`BEETS_AGENT_KEY`, header `X-Agent-Key`). The endpoints are fixed (`/health`, `/edit`, `/jobs`); no command or path comes from a request. Long jobs return at once and the API reports progress and the result back to the Worker. There is **no fallback**: if the server cannot be reached, the app disables Organize, enrich and name editing and shows the reason (checked on load, every minute and when the window gets focus).
+There is **no fallback**: if the server cannot be reached, the app disables Organize, enrich and name editing and shows the reason (checked on load, every minute and when the window gets focus). One job runs at a time; edits wait up to 10 seconds for the library lock and are otherwise refused. A run that never reports back (server died) is marked failed after 2 hours (4 for enrich). The `/api/beets/agent/*` endpoints on the Worker skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
 
 One-time setup:
-1. Pick a random key and store it as a Worker secret: `npx wrangler secret put BEETS_AGENT_KEY`, and on Unraid save the same key, on one line, to `/boot/config/mymusic-agent.key` (`chmod 600`).
+1. Pick a random key (`openssl rand -hex 32`) and store it as a Worker secret: `npx wrangler secret put BEETS_AGENT_KEY`. On Unraid save the same key, on one line, to `/boot/config/mymusic-agent.key` (`chmod 600`). `beets-enrich.sh` uses the same file.
 2. Copy `scripts/unraid/mymusic-api/server.py` to `/mnt/user/appdata/mymusic-api/server.py` and add this service to the compose stack, then `docker compose up -d mymusic-api`:
    ```yaml
    mymusic-api:
@@ -132,19 +108,68 @@ One-time setup:
        - /mnt/user/appdata/beets:/beets-appdata           # auto-import.log, enrich.log, tag-edits.log
        - /tmp:/host-tmp                                   # shares /tmp/beets-import.lock with beets-enrich.sh
    ```
-   The Docker socket gives this container root-level control of the server, which is why it only exposes the three fixed endpoints behind the key and Cloudflare Access. Check it: `curl -H "X-Agent-Key: $(cat /boot/config/mymusic-agent.key)" http://localhost:8099/health`.
-3. Cloudflare Zero Trust: add a tunnel public hostname (for example `mymusic-api.lv5.uk`) pointing to `http://<unraid-ip>:8099` (or the container name if the tunnel runs in the same Docker network), and add it to the Access application/policy that allows the service token the Worker already uses for Navidrome.
-4. Set `HOME_API_URL` in `wrangler.jsonc` (`vars`) to that hostname, e.g. `https://mymusic-api.lv5.uk`, and push to `main`; CI deploys the Worker.
-5. The Navidrome user in `NAS_USER` must be an **admin**, or "start scan" is refused and the button stops after Beets finishes.
-6. If you used the old polling script, delete the `beets-agent` User Script (and nothing else changes: `beets-enrich.sh` stays as the nightly job).
+   The Docker socket gives this container root-level control of the server, which is why it only exposes the three fixed endpoints behind the key and Cloudflare Access. After changing `server.py`, run `docker restart mymusic-api`. Check it: `curl -H "X-Agent-Key: $(cat /boot/config/mymusic-agent.key)" http://localhost:8099/health`.
+3. Cloudflare Zero Trust: add a tunnel public hostname (`mymusic-api.lv5.uk`) pointing to `http://<unraid-ip>:8099` (or the container name if the tunnel runs in the same Docker network), and add it to the Access application/policy that allows the service token the Worker already uses for Navidrome.
+4. `HOME_API_URL` in `wrangler.jsonc` is that hostname; pushing to `main` deploys it.
+5. The Navidrome user in `NAS_USER` must be an **admin**, or "start scan" is refused and the app cannot trigger rescans after an import or an edit.
 
-Notes: imports run `beet -p musicbrainz,scrub,fromfilename import -g -q /downloads`, then a second `-s -q` pass for leftovers (files with no tags all share a blank artist and album). One job at a time; the API shares `/tmp/beets-import.lock` with `beets-enrich.sh`, so they never overlap. A run that never reports back (server died) is marked failed after 2 hours (4 for enrich). Imports are quiet (`-q`) and cannot ask questions; anything that needs a human choice still goes through Mp3tag or `beet import -L` in a terminal. The endpoints the server calls on the Worker (`/api/beets/agent/*`) skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
+Logs on the server (all in `/mnt/user/appdata/beets/`): `auto-import.log` (imports), `enrich.log` (enrich), `tag-edits.log` (name edits). `docker logs mymusic-api` shows the API's own requests.
+
+### Navidrome (container `navidrome`, image `deluan/navidrome:latest`)
+- Port `4533`. Data/db/cache: `/mnt/user/appdata/navidrome` -> `/data`. Music: `/mnt/user/Music` -> `/music` **read-only** (it never writes tags or deletes files).
+- Env: `ND_LOGLEVEL=info`, `ND_BASEURL=""`, `ND_IMAGECACHESIZE=1000MB`, `ND_ENABLESHARING=true`, `ND_SCANSCHEDULE=1h`. The app starts a scan itself after an import and after a name edit; otherwise new files can take up to an hour to appear.
+- It scans all of `/music`, so files still waiting in `_inbox` are visible too. Excluding `_inbox` is not set up yet.
+- The Worker reaches it through a Cloudflare Tunnel (`NAS_BASE_URL`, optional Cloudflare Access service token `NAS_CF_ACCESS_*`).
+- Albums grayed out with a "?" are Navidrome's missing-files marker (files gone from disk). Remove them under user menu -> Missing Files (0.55+), then rescan.
+
+### File Browser (container `filebrowser`, image `filebrowser/filebrowser:latest`)
+- Port `8080` -> container `80`. Runs as `user: "0:0"` to bypass Unraid permission lockouts; healthcheck disabled.
+- Root `/srv` = the whole `/mnt/user/Music` share, so uploads go to `/srv/_inbox` (host `/mnt/user/Music/_inbox`). Database: `/mnt/user/appdata/filebrowser` -> `/database`; config: `/mnt/user/appdata/filebrowser/config` -> `/config`.
+- Reached on the LAN (no tunnel recorded here).
+
+### Troubleshooting
+1. **Everything in the inbox is skipped**: check `quiet_fallback` is `asis` in `config.yaml` (not `skip`), then `docker restart beets`.
+2. **Import seems to finish instantly / "another job is running"**: an import or enrich holds `/tmp/beets-import.lock`. Check `docker exec beets pgrep -a beet`. Two import processes at once (for example a manual `beet import` in a terminal during an Organize run) fight over the same files; wait for one to end.
+3. **Slow imports**: MusicBrainz is rate limited (~1 request/s). While sorting a very large inbox you can temporarily use `plugins: musicbrainz scrub`.
+4. **Tags cannot be written over SMB (Mp3tag "cannot write") or by the app**: Beets runs as root, so imported files are `root:root` with `rw-r-----` and the SMB user `nobody` cannot write them. Fix: `chown -R nobody:users /mnt/user/Music && chmod -R u+rwX,g+rwX,o+rX /mnt/user/Music` (the same as Tools -> New Permissions), only while no import is running. To stop it coming back, set `PUID=99` and `PGID=100` on the `beets` service. In Mp3tag use ID3v2.3 with UTF-16 so Vietnamese text reads correctly everywhere.
+5. **Grayed-out album with "?"**: Navidrome missing files; see the Navidrome section.
+6. **Same artist in two folders by capitalisation** ("Berlin Orchestra" / "Berlin orchestra"): rename one to the other in the web app (it merges them), or use the script below to move the files into one folder.
+7. **The app says the home server is unavailable**: the message is the reason (not configured, cannot reach, refused 403 = Access policy or key mismatch, 502/52x = container not running). Run the `curl .../health` check above on Unraid first, then check the tunnel hostname and the Access policy.
+
+### Editing names and tags
+- **In the web app** (small fixes, merging albums and artists): see "Editing names in the web app" below. It writes into the files and the Beets library through `mymusic-api`.
+- **Mp3tag on the laptop** (bulk edits): over the SMB share `\\Lincoln-Unraid\Music` (File Browser cannot edit tags). Picard was tried and dropped: its web UI cannot type Vietnamese. Mp3tag: Tools -> Options -> Tags -> Mpeg, write **ID3v2.3 with UTF-16** so Vietnamese reads correctly in Navidrome and on Android. Writing needs the files to be writable by `nobody` (troubleshooting item 4). After editing: `docker exec beets beet update` (re-reads tags), `beet move` if the names changed, then press **Organize** in the web app. Do not edit while a Beets job is running. Quick fixes without a laptop: `beet modify` / `beet edit`.
+
+### Fixing ASCII-typed Vietnamese in tags
+`scripts/unraid/fix-vietnamese.py` (runs in the `beets` container, preview unless `--apply`) decodes VIQR-style text in titles, artists and albums: `o*`/`o+` -> ơ, `u*`/`u+` -> ư, `a(` -> ă, `a^ e^ o^` -> â ê ô, `dd`/`d-` -> đ, tones `` ` ' ? ~ . ``, and `_20` -> space. Only fields with clear markers (`a^`, `o*`, `u+`, a backtick after a vowel, a word starting `dd`) are touched, so English titles stay as they are. File names cannot contain `'`, `(` or `?`, so those marks became `_` and are lost: such fields are decoded as far as possible and listed in `/config/vietnamese-review.txt` for hand editing (Mp3tag or the web app). `--apostrophes` also restores `_` to `'` in English titles (`Let_s` -> `Let's`).
+
+```bash
+docker exec -i beets /lsiopy/bin/python3 - < /mnt/user/appdata/beets/fix-vietnamese.py            # preview
+docker exec -i beets /lsiopy/bin/python3 - --apply < /mnt/user/appdata/beets/fix-vietnamese.py    # do it
+```
+Beets renames and moves the files to match the new tags; then press **Organize** in the web app. Songs imported with blank tags (`00 -.mp3`) have nothing to decode.
+
+### Merging artists that differ only by capitals (and moving their files)
+`scripts/unraid/merge-artist-case.py` runs inside the `beets` container. It lists every artist and album artist whose spelling differs only by case, keeps the most-used spelling and has Beets retag the others **and move the files into one folder** (the web app's rename does not move files). It is a preview unless `--apply` is given, and refuses to run during an import. Copy it to `/mnt/user/appdata/beets/merge-artist-case.py`, then:
+
+```bash
+docker exec -i beets python3 - < /mnt/user/appdata/beets/merge-artist-case.py            # preview
+docker exec -i beets python3 - --apply < /mnt/user/appdata/beets/merge-artist-case.py    # do it
+```
+
+Afterwards press **Organize inbox and update library** in the web app (Navidrome rescan and sync). If both folders held the same songs, each song now exists twice in the merged folder; find them with `beet ls -f '$title | $length' albumartist:"Name" | sort` and remove the extras with `beet remove`. Moving files gives Navidrome new song ids, so playlists and ratings that point at the moved songs are lost; the web app's rename avoids that by not moving files.
 
 ## Editing names in the web app
 
-Library tab: a song's **⋯ -> Edit details…** changes its title, artist, album and track number; an album or artist page has **✎ Rename / merge**. Typing a name that already exists merges the two (all songs move over and the empty album or artist disappears, because albums and artists are just the songs' names). Text is stored as Unicode NFC so Vietnamese diacritics compare equal.
+Library tab: a song's **⋯ -> Edit details…** changes its title, artist, album and track number; an album or artist page has **✎ Rename / merge**. Typing a name that already exists merges the two (all songs move over and the empty album or artist disappears, because albums and artists are just the songs' names). Text is stored as Unicode NFC so Vietnamese diacritics compare equal. Any family member can edit.
 
-Each edit is sent to the home server API first, which writes the tags into the files (and updates the Beets library) with Beets' own Python library, under the import lock. Only if that succeeds is the change stored in the app (flagged `edited`, migration `0009`, so "Sync music from NAS" never restores the old names) and a Navidrome scan started. If the server cannot be reached the edit is refused with the reason and nothing changes. Files are **not moved** (a new path would give Navidrome a new song id and break playlists and ratings), so folder names keep the old spelling. Songs are matched by their old title/artist/album (case and diacritic form tolerant); an ambiguous or missing match is skipped and reported, and only the app's copy changes. Songs uploaded to the app (not on the NAS) have no file on the server, so only the app's copy changes. Tags are written as the Beets config says (`id3v23` for ID3v2.3 with UTF-16, as the Mp3tag note above requires). Log: `/mnt/user/appdata/beets/tag-edits.log`.
+Each edit is sent to the home server API first, which writes the tags into the files (and updates the Beets library) with Beets' own Python library, under the import lock. Only if that succeeds is the change stored in the app (the song is flagged `edited`, migration `0009`, so "Sync music from NAS" never restores the old names) and a Navidrome scan started. If the server cannot be reached the edit is refused with the reason and nothing changes.
+
+- Files are **not moved**: a new path would give Navidrome a new song id and break playlists and ratings. Folder names keep the old spelling.
+- Songs are matched by their old title/artist/album (case and diacritic-form tolerant). An ambiguous or missing match is skipped and reported, and only the app's copy changes.
+- Songs uploaded to the app (not on the NAS) have no file on the server, so only the app's copy changes.
+- Tags are written as the Beets config says (`id3v23` for ID3v2.3 with UTF-16, as the Mp3tag note above requires). Log: `/mnt/user/appdata/beets/tag-edits.log`.
+- The phone gets the new names on its next sync.
 
 ## Ratings and AI suggestions
 
@@ -161,6 +186,8 @@ npm run dev                       # Worker on :8787
 npm run dev:web                   # web player on :5173, proxies /api to the Worker
 cd flutter && flutter run --dart-define=API_URL=http://10.0.2.2:8787 --dart-define=GOOGLE_SERVER_CLIENT_ID=<id>
 ```
+
+`wrangler dev` uses your real Workers AI and, if `HOME_API_URL` is set, your real home server; leave it empty locally to keep Organize, enrich and name editing disabled.
 
 ## Android Auto with a sideloaded build
 
