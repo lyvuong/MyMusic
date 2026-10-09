@@ -59,3 +59,13 @@ export interface BeetsRun {
   /** The end of the import output. */
   log: string;
 }
+
+/** Whether the home server API (imports, enrich, writing names into files) can be reached. */
+export interface ServerStatus {
+  configured: boolean;
+  ok: boolean;
+  /** Why it is unavailable. */
+  error: string;
+  /** The job running on the server right now, if any. */
+  busy: string | null;
+}

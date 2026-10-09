@@ -33,6 +33,77 @@ export async function delta(db: D1Database, familyId: string, uid: string, since
   return { now: Date.now(), tracks: tracks.results.map(toTrack), playlists };
 }
 
+/** Text typed by a person: Unicode NFC (so Vietnamese diacritics compare equal whatever produced them), trimmed. */
+export const cleanName = (s: unknown, max = 200) => String(s ?? "").normalize("NFC").replace(/\s+/g, " ").trim().slice(0, max);
+
+export interface TrackEdit { title?: string; artist?: string; album?: string; trackNo?: number }
+
+/**
+ * An artist or album name may already exist spelled with decomposed diacritics (common in file tags). Returns that
+ * stored spelling when it is the same text as `name`, so a rename or merge lands on the existing entry, else `name`.
+ */
+async function canonicalName(db: D1Database, familyId: string, col: "artist" | "album", name: string): Promise<string> {
+  const rows = await db.prepare(`SELECT DISTINCT ${col} AS n FROM tracks WHERE family_id = ? AND deleted = 0 AND ${col} != ''`)
+    .bind(familyId).all<{ n: string }>();
+  const names = rows.results.map((r) => r.n);
+  return names.includes(name) ? name : (names.find((n) => n.normalize("NFC") === name) ?? name);
+}
+
+/** What an edit changed, so the caller can queue the same change for the files on the home server. */
+export interface TrackEditResult {
+  /** Only NAS songs have files that Beets manages. */
+  source: "r2" | "nas";
+  before: { title: string; artist: string; album: string; trackNo: number };
+  applied: { title?: string; artist?: string; album?: string; trackNo?: number };
+}
+
+/**
+ * Edits one song's names. The song is flagged so the NAS sync does not put the file's tags back.
+ * Returns null when the song is not in this family's library.
+ */
+export async function editTrack(
+  db: D1Database, familyId: string, id: string, e: TrackEdit, beforeCommit?: (plan: TrackEditResult) => Promise<void>,
+): Promise<TrackEditResult | null> {
+  const row = await db.prepare("SELECT source, title, artist, album, track_no FROM tracks WHERE id = ? AND family_id = ? AND deleted = 0")
+    .bind(id, familyId).first<{ source: "r2" | "nas"; title: string; artist: string; album: string; track_no: number }>();
+  if (!row) return null;
+  const before = { title: row.title, artist: row.artist, album: row.album, trackNo: row.track_no };
+  const applied: TrackEditResult["applied"] = {};
+  if (e.title !== undefined) applied.title = e.title;
+  if (e.artist !== undefined) applied.artist = e.artist && await canonicalName(db, familyId, "artist", e.artist);
+  if (e.album !== undefined) applied.album = e.album && await canonicalName(db, familyId, "album", e.album);
+  if (e.trackNo !== undefined) applied.trackNo = e.trackNo;
+  // Only what really changed goes to the files.
+  for (const k of Object.keys(applied) as (keyof typeof applied)[]) if (applied[k] === before[k]) delete applied[k];
+  if (Object.keys(applied).length === 0) return { source: row.source, before, applied };
+  // Lets the caller write the files first; if it throws, nothing is changed here.
+  await beforeCommit?.({ source: row.source, before, applied });
+  await db.prepare("UPDATE tracks SET title = ?, artist = ?, album = ?, track_no = ?, edited = 1, updated_at = ? WHERE id = ? AND family_id = ?")
+    .bind(applied.title ?? before.title, applied.artist ?? before.artist, applied.album ?? before.album, applied.trackNo ?? before.trackNo, Date.now(), id, familyId).run();
+  return { source: row.source, before, applied };
+}
+
+/**
+ * Renames an artist or an album on all of its songs. When `to` is a name that already exists the two become one,
+ * which is how albums (and artists) are merged; an album with no songs left simply disappears.
+ * `from` must be the stored name exactly. Returns how many songs changed, the final name, and how many of those
+ * songs are NAS files (the ones whose tags can be rewritten).
+ */
+export async function renameGroup(
+  db: D1Database, familyId: string, kind: "artist" | "album", from: string, to: string,
+  beforeCommit?: (plan: { target: string; nas: number }) => Promise<void>,
+): Promise<{ updated: number; target: string; nas: number }> {
+  const col = kind === "artist" ? "artist" : "album";
+  const target = await canonicalName(db, familyId, col, to);
+  if (target === from) return { updated: 0, target, nas: 0 };
+  const nas = await db.prepare(`SELECT COUNT(*) AS n FROM tracks WHERE family_id = ? AND deleted = 0 AND source = 'nas' AND ${col} = ?`)
+    .bind(familyId, from).first<{ n: number }>();
+  await beforeCommit?.({ target, nas: nas?.n ?? 0 });
+  const r = await db.prepare(`UPDATE tracks SET ${col} = ?, edited = 1, updated_at = ? WHERE family_id = ? AND deleted = 0 AND ${col} = ?`)
+    .bind(target, Date.now(), familyId, from).run();
+  return { updated: r.meta.changes ?? 0, target, nas: nas?.n ?? 0 };
+}
+
 /** Creates or updates one of the caller's playlists. Returns false if the id belongs to someone else. */
 export async function savePlaylist(
   db: D1Database, familyId: string, uid: string, id: string, name: string, shared: boolean, trackIds: string[],

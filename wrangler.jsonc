@@ -16,7 +16,10 @@
 	"vars": {
 		"FIREBASE_PROJECT_ID": "mymusic-3149e",
 		// NAS (Navidrome/Subsonic) behind a Cloudflare Tunnel. Empty = NAS disabled.
-		"NAS_BASE_URL": "https://navidrome.lv5.uk"
+		"NAS_BASE_URL": "https://navidrome.lv5.uk",
+		// The home server API (scripts/unraid/mymusic-api) behind a Cloudflare Tunnel; protected by the same Access service token.
+		// Empty = import, enrich and name editing are disabled in the app.
+		"HOME_API_URL": ""
 	},
 	"r2_buckets": [
 		{

@@ -1,13 +1,13 @@
 #!/bin/bash
 # Unraid "User Scripts" job, schedule: custom cron `0 3 * * *` (every night at 3:00).
 #
-# Second half of the two-run setup: the web app's Organize button (beets-agent.sh) imports with only the
+# Second half of the two-run setup: the web app's Organize button (scripts/unraid/mymusic-api) imports with only the
 # `musicbrainz scrub` plugins so it finishes fast. This job adds what that run skipped, for albums already in the
 # library: cover art, art embedded in the files, and genres. It uses the full plugin list from config.yaml.
 # Each step only touches albums that still lack the data, so a night with nothing new ends in seconds.
 #
 # Each night is also reported to the MyMusic Worker, so the Family tab shows it under "Beets history". It uses the
-# same key file as beets-agent.sh; if the Worker cannot be reached the job still runs and only logs locally.
+# same key file as the mymusic-api container; if the Worker cannot be reached the job still runs and only logs locally.
 
 LOG="/mnt/user/appdata/beets/enrich.log"
 API="https://mymusic.lyvuong.workers.dev"

@@ -1,9 +1,10 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { BeetsRun, FamilyInfo, Playlist, Suggestion, Track } from "../shared/types";
+import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, Track } from "../shared/types";
 import { api } from "./api";
 import { ArtistPic, Cover } from "./art";
 import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } from "./browse";
+import { EditDialog } from "./EditDialog";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
 import { RatingsProvider, Stars } from "./ratings";
@@ -88,6 +89,24 @@ function FamilySetup({ onDone }: { onDone: (f: FamilyInfo) => void }) {
 function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo; reloadFamily: () => Promise<void> }) {
   const [tab, setTab] = useState<Tab>("library");
   const lib = useLibrary(true);
+  // Editing names, Organize and enrich need the home server; they are disabled (with the reason) while it is unreachable.
+  const [home, setHome] = useState<ServerStatus | null>(null);
+  const checkHome = useCallback(async () => {
+    try {
+      setHome(await api.serverStatus());
+    } catch (e) {
+      setHome({ configured: true, ok: false, error: e instanceof Error ? e.message : "Could not check the home server", busy: null });
+    }
+  }, []);
+  useEffect(() => {
+    void checkHome();
+    const t = window.setInterval(() => void checkHome(), 60000);
+    window.addEventListener("focus", checkHome);
+    return () => {
+      window.clearInterval(t);
+      window.removeEventListener("focus", checkHome);
+    };
+  }, [checkHome]);
   const tabs: [Tab, string][] = [["library", "Library"], ["foryou", "For you"], ["playlists", "Playlists"], ["family", "Family"]];
   return (
     <div className="shell">
@@ -100,10 +119,10 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
         </nav>
       </header>
       <main>
-        {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} />}
+        {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} home={home} />}
         {tab === "foryou" && <ForYou lib={lib} />}
         {tab === "playlists" && <Playlists lib={lib} uid={user.uid} />}
-        {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} refresh={lib.refresh} />}
+        {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} refresh={lib.refresh} home={home} recheck={checkHome} />}
       </main>
       <PlayerBar />
     </div>
@@ -135,7 +154,9 @@ function TrackRow({ t, queue, extra, number, hideArtist, select, note }: { t: Tr
 
 type View = "albums" | "artists" | "songs";
 
-function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlists: Playlist[]; uid: string; refresh: () => Promise<void> }) {
+function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; playlists: Playlist[]; uid: string; refresh: () => Promise<void>; home: ServerStatus | null }) {
+  const canEdit = home?.ok !== false;
+  const editOff = home && !home.ok ? `Editing names is unavailable: ${home.error}` : "";
   const [q, setQ] = useState("");
   const [view, setView] = useState<View>("albums");
   const [open, setOpen] = useState<{ kind: "album" | "artist"; key: string } | null>(null);
@@ -159,6 +180,13 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
   const detailAlbum = useMemo(() => (open?.kind === "album" ? groupAlbums(tracks).find((a) => a.key === open.key) : undefined), [tracks, open]);
   const detailArtist = useMemo(() => (open?.kind === "artist" ? groupArtists(tracks).find((a) => a.name === open.key) : undefined), [tracks, open]);
   const mine = playlists.filter((p) => p.ownerUid === uid);
+  const allAlbums = useMemo(() => groupAlbums(tracks), [tracks]);
+  const allArtists = useMemo(() => groupArtists(tracks), [tracks]);
+  const [editing, setEditing] = useState<{ kind: "song"; track: Track } | { kind: "album" | "artist"; name: string } | null>(null);
+  // An album or artist that no longer exists (renamed, merged, or its songs moved away): leave its page.
+  useEffect(() => {
+    if (open && tracks.length > 0 && !detailAlbum && !detailArtist) setOpen(null);
+  }, [open, tracks.length, detailAlbum, detailArtist]);
 
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -276,6 +304,8 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
         } else if (v.startsWith("pl:")) {
           const pl = mine.find((p) => p.id === v.slice(3));
           if (pl) await addMany(pl, [t]);
+        } else if (v === "edit") {
+          setEditing({ kind: "song", track: t });
         } else if (v === "del" && confirm(`Delete "${t.title}" for the whole family?`)) {
           await api.deleteTrack(t.id);
           await refresh();
@@ -285,9 +315,63 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
       <option value="">⋯</option>
       <option value="new">＋ New playlist…</option>
       {mine.map((p) => <option key={p.id} value={`pl:${p.id}`}>{p.trackIds.includes(t.id) ? "✓ In" : "Add to"} {p.name}</option>)}
+      <option value="edit" disabled={!canEdit}>Edit details…</option>
       <option value="del">Delete song…</option>
     </select>
   );
+
+  /** The edit dialog: one song's details, or an album/artist name (typing an existing name merges the two). */
+  const dialog = (() => {
+    if (!editing) return null;
+    const close = () => setEditing(null);
+    if (editing.kind === "song") {
+      const t = editing.track;
+      return (
+        <EditDialog
+          title="Edit song"
+          onClose={close}
+          fields={[
+            { key: "title", label: "Title", value: t.title, required: true },
+            { key: "artist", label: "Artist", value: t.artist, options: allArtists.map((a) => a.name) },
+            { key: "album", label: "Album", value: t.album, options: allAlbums.map((a) => a.name) },
+            { key: "trackNo", label: "Track number", value: t.trackNo ? String(t.trackNo) : "", numeric: true },
+          ]}
+          onSave={async (v) => {
+            const r = await api.editTrack(t.id, { title: v.title, artist: v.artist, album: v.album, trackNo: Number(v.trackNo) || 0 });
+            await refresh();
+            flash(`Updated "${v.title.trim()}"${r?.warning ? ` ${r.warning}` : ""}`);
+          }}
+        />
+      );
+    }
+    const kind = editing.kind;
+    const current = editing.name;
+    const groups = (kind === "album" ? allAlbums.map((a) => ({ name: a.name, count: a.tracks.length })) : allArtists.map((a) => ({ name: a.name, count: a.tracks.length })));
+    const nfc = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim();
+    const count = groups.find((g) => g.name === current)?.count ?? 0;
+    return (
+      <EditDialog
+        title={kind === "album" ? "Rename or merge album" : "Rename or merge artist"}
+        onClose={close}
+        fields={[{ key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, options: groups.filter((g) => g.name !== current).map((g) => g.name) }]}
+        hint={(v) => {
+          const to = nfc(v.name ?? "");
+          const target = groups.find((g) => g.name !== current && nfc(g.name) === to);
+          return target
+            ? { text: `"${target.name}" already exists (${songCount(target.count)}). All ${songCount(count)} here move into it and "${current}" is removed.`, action: "Merge" }
+            : { text: `Renames the ${kind} on all ${songCount(count)}.`, action: "Rename" };
+        }}
+        onSave={async (v) => {
+          const to = nfc(v.name);
+          const existing = groups.find((g) => g.name !== current && nfc(g.name) === to);
+          const r = await api.renameGroup(kind, current, to);
+          if (open?.kind === kind && open.key === current) setOpen({ kind, key: existing?.name ?? to });
+          await refresh();
+          flash(`${existing ? `Merged into ${existing.name}` : `Renamed to ${to}`}${r?.warning ? ` ${r.warning}` : ""}`);
+        }}
+      />
+    );
+  })();
 
   if (detailAlbum || detailArtist) {
     const back = () => setOpen(null);
@@ -295,10 +379,14 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
     return (
       <>
         {detailAlbum ? (
-          <Hero cover={<Cover track={detailAlbum.art} seed={detailAlbum.name} className="lg" />} title={detailAlbum.name} subtitle={detailAlbum.artist} tracks={list} onBack={back} />
+          <Hero cover={<Cover track={detailAlbum.art} seed={detailAlbum.name} className="lg" />} title={detailAlbum.name} subtitle={detailAlbum.artist} tracks={list} onBack={back}
+            actions={<button disabled={!canEdit} title={editOff} onClick={() => setEditing({ kind: "album", name: detailAlbum.name })}>✎ Rename / merge</button>} />
         ) : (
-          <Hero cover={<ArtistPic name={detailArtist!.name} className="lg" />} title={detailArtist!.name} subtitle="Artist" tracks={list} onBack={back} />
+          <Hero cover={<ArtistPic name={detailArtist!.name} className="lg" />} title={detailArtist!.name} subtitle="Artist" tracks={list} onBack={back}
+            actions={<button disabled={!canEdit} title={editOff} onClick={() => setEditing({ kind: "artist", name: detailArtist!.name })}>✎ Rename / merge</button>} />
         )}
+        {editOff && <p className="error" role="alert">{editOff}</p>}
+        {dialog}
         {toastEl}
         {selectBar(list)}
         <p className="muted">{songCount(list.length)} {selectLink}</p>
@@ -315,6 +403,7 @@ function Library({ tracks, playlists, uid, refresh }: { tracks: Track[]; playlis
   const views: [View, string][] = [["albums", "Albums"], ["artists", "Artists"], ["songs", "Songs"]];
   return (
     <>
+      {dialog}
       {toastEl}
       <input className="search" placeholder="Search your music" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="seg" role="tablist">
@@ -509,7 +598,7 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
   );
 }
 
-function Family({ family, uid, reload, refresh }: { family: FamilyInfo; uid: string; reload: () => Promise<void>; refresh: () => Promise<void> }) {
+function Family({ family, uid, reload, refresh, home, recheck }: { family: FamilyInfo; uid: string; reload: () => Promise<void>; refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void> }) {
   const [code, setCode] = useState("");
   const [nasMsg, setNasMsg] = useState("");
   const syncNas = async (): Promise<boolean> => {
@@ -552,7 +641,7 @@ function Family({ family, uid, reload, refresh }: { family: FamilyInfo; uid: str
           {code && <code className="code">{code}</code>}
         </p>
       )}
-      {family.role === "owner" && <Organize syncNas={syncNas} />}
+      {family.role === "owner" && <Organize syncNas={syncNas} home={home} recheck={recheck} />}
       {family.role === "owner" && (
         <p>
           <button onClick={() => void syncNas()}>Sync music from NAS</button> <small className="muted">{nasMsg}</small>
@@ -627,7 +716,8 @@ async function followRun(first: BeetsRun, syncNas: () => Promise<boolean>) {
   }
 }
 
-function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
+function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>; home: ServerStatus | null; recheck: () => Promise<void> }) {
+  const down = home !== null && !home.ok;
   const { busy, msg, runs, active } = useSyncExternalStore(watchOrganize, () => organizeState);
   const sync = useRef(syncNas);
   sync.current = syncNas;
@@ -660,11 +750,16 @@ function Organize({ syncNas }: { syncNas: () => Promise<boolean> }) {
   return (
     <>
       <p>
-        <button disabled={busy} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
-        <button disabled={busy} onClick={() => void enrich()} title="Fetch missing cover art and genres now, like the nightly job">Run enrich now</button>{" "}
+        <button disabled={busy || down} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
+        <button disabled={busy || down} onClick={() => void enrich()} title="Fetch missing cover art and genres now, like the nightly job">Run enrich now</button>{" "}
         {busy && <span className="spinner" aria-hidden="true" />}
         <small className="muted" role="status">{msg}</small>
       </p>
+      {down && (
+        <p className="error" role="alert">
+          Home server unavailable: {home.error} <button className="link" onClick={() => void recheck()}>Check again</button>
+        </p>
+      )}
       {active?.status === "running" && active.inboxBefore !== null && active.inboxNow !== null && active.inboxBefore > 0 && (
         <p>
           <progress max={active.inboxBefore} value={Math.max(0, active.inboxBefore - active.inboxNow)} />{" "}

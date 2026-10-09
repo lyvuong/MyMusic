@@ -73,7 +73,7 @@ export function ArtistCard({ artist, onOpen }: { artist: Artist; onOpen: () => v
 }
 
 /** Page header for an album or artist: big picture, title, Play and Shuffle. */
-export function Hero({ cover, title, subtitle, tracks, onBack }: { cover: ReactNode; title: string; subtitle: string; tracks: Track[]; onBack: () => void }) {
+export function Hero({ cover, title, subtitle, tracks, onBack, actions }: { cover: ReactNode; title: string; subtitle: string; tracks: Track[]; onBack: () => void; actions?: ReactNode }) {
   const p = usePlayer();
   const shuffled = () => {
     const a = [...tracks];
@@ -94,6 +94,7 @@ export function Hero({ cover, title, subtitle, tracks, onBack }: { cover: ReactN
           <div className="hero-actions">
             <button className="primary" onClick={() => p.play(tracks, 0)}>▶ Play</button>
             <button onClick={() => p.play(shuffled(), 0)}>⤮ Shuffle</button>
+            {actions}
           </div>
         </div>
       </div>

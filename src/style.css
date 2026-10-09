@@ -163,3 +163,12 @@ button.star:hover:not(:disabled) { background: none; color: var(--accent); }
   .row .dur { display: none; }
   button.star { width: 20px; }
 }
+
+/* Edit dialog */
+.modal-back { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgb(0 0 0 / .45); }
+.modal { width: min(440px, 100%); max-height: 90vh; overflow: auto; gap: 12px; }
+.modal h3 { margin: 0; }
+.modal .field { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); }
+.modal .field input { font-size: 1rem; color: var(--fg); border-radius: 12px; width: 100%; }
+.modal .hint { margin: 0; font-size: .9rem; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }

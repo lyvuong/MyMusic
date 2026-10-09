@@ -1,4 +1,4 @@
-import type { BeetsRun, FamilyInfo, Playlist, Suggestion, Track } from "../shared/types";
+import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, Track } from "../shared/types";
 import { auth } from "./firebase";
 
 export class ApiError extends Error {
@@ -59,6 +59,7 @@ export const api = {
     call<{ imported: number; next: number; done: boolean; removed: number }>("POST", "/api/nas/sync", { offset, run }),
   scanNas: () => call<{ ok: boolean }>("POST", "/api/nas/scan"),
   nasScanning: () => call<{ scanning: boolean }>("GET", "/api/nas/scan"),
+  serverStatus: () => call<ServerStatus>("GET", "/api/server/status"),
   beetsRuns: () => call<{ runs: BeetsRun[] }>("GET", "/api/beets/runs"),
   runBeets: () => call<BeetsRun>("POST", "/api/beets/run"),
   runEnrich: () => call<BeetsRun>("POST", "/api/beets/enrich"),
@@ -66,6 +67,9 @@ export const api = {
   rateTrack: (id: string, rating: number) => call<void>("PUT", `/api/ratings/${id}`, { rating }),
   suggest: (prompt: string) => call<Suggestion>("POST", "/api/suggest", { prompt }),
   fetchArt: () => call<{ updated: number; remaining: number }>("POST", "/api/art/fetch"),
+  editTrack: (id: string, e: { title?: string; artist?: string; album?: string; trackNo?: number }) => call<{ ok: boolean; filesUpdated: boolean; warning: string }>("PATCH", `/api/tracks/${id}`, e),
+  /** Renames an artist or album on all its songs; an existing name merges the two. */
+  renameGroup: (kind: "artist" | "album", from: string, to: string) => call<{ updated: number; filesUpdated: boolean; warning: string }>("POST", "/api/library/rename", { kind, from, to }),
   deleteTrack: (id: string) => call<void>("DELETE", `/api/tracks/${id}`),
 
   /** URL for <audio>/<img>, which cannot send an Authorization header. */

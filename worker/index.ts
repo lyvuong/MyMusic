@@ -2,8 +2,9 @@ import { Hono } from "hono";
 import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
 import { findAlbumArt, findArtistImage } from "./artwork";
-import { delta, savePlaylist } from "./library";
-import { agentKeyOk, claimEnrich, claimRun, finishRun, listRuns, requestEnrich, requestRun, startEnrich, updateProgress } from "./beets";
+import { cleanName, delta, editTrack, renameGroup, savePlaylist } from "./library";
+import { agentKeyOk, beginRun, failRun, finishRun, listRuns, startEnrich, updateProgress } from "./beets";
+import { HomeError, homeConfigured, homeEdit, homeStartJob, homeStatus, type TagOp } from "./home";
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { suggest, SuggestError } from "./suggest";
@@ -37,7 +38,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest"]) {
   app.use(p, needFamily);
 }
 
@@ -144,6 +145,70 @@ app.post("/api/upload", async (c) => {
   return c.json({ ids, duplicates });
 });
 
+/** Edits a song's title, artist, album and/or track number. */
+app.patch("/api/tracks/:id", async (c) => {
+  const b = await c.req.json<{ title?: unknown; artist?: unknown; album?: unknown; trackNo?: unknown }>().catch(() => null);
+  if (!b) return c.json({ error: "bad request" }, 400);
+  const edit: { title?: string; artist?: string; album?: string; trackNo?: number } = {};
+  if (b.title !== undefined) {
+    edit.title = cleanName(b.title);
+    if (!edit.title) return c.json({ error: "title cannot be empty" }, 400);
+  }
+  if (b.artist !== undefined) edit.artist = cleanName(b.artist);
+  if (b.album !== undefined) edit.album = cleanName(b.album);
+  if (b.trackNo !== undefined) {
+    const n = Number(b.trackNo);
+    if (!Number.isInteger(n) || n < 0 || n > 9999) return c.json({ error: "bad track number" }, 400);
+    edit.trackNo = n;
+  }
+  // The file's tags are written on the home server first (NAS songs only); if that fails nothing changes here.
+  let files: Awaited<ReturnType<typeof homeEdit>> | null = null;
+  try {
+    const r = await editTrack(c.env.DB, c.get("family").familyId, c.req.param("id"), edit, async (plan) => {
+      if (plan.source === "nas") files = await homeEdit(c.env, [{ kind: "song", match: plan.before, set: plan.applied }]);
+    });
+    if (!r) return c.json({ error: "not found" }, 404);
+  } catch (e) {
+    if (e instanceof HomeError) return c.json({ error: e.message }, 502);
+    throw e;
+  }
+  return c.json(await afterFileEdit(c.env, c.executionCtx, files));
+});
+
+/**
+ * Renames an artist or album everywhere in the family library. If the new name already exists the two are merged
+ * (all songs end up under it). `from` is the current name exactly as listed.
+ */
+app.post("/api/library/rename", async (c) => {
+  const b = await c.req.json<{ kind?: string; from?: unknown; to?: unknown }>().catch(() => null);
+  if (!b || (b.kind !== "artist" && b.kind !== "album") || typeof b.from !== "string" || !b.from) return c.json({ error: "bad request" }, 400);
+  const to = cleanName(b.to);
+  if (!to) return c.json({ error: "name cannot be empty" }, 400);
+  let files: Awaited<ReturnType<typeof homeEdit>> | null = null;
+  const kind = b.kind;
+  const from = b.from;
+  try {
+    const r = await renameGroup(c.env.DB, c.get("family").familyId, kind, from, to, async (plan) => {
+      if (plan.nas > 0) files = await homeEdit(c.env, [{ kind, from, to: plan.target } satisfies TagOp]);
+    });
+    if (r.updated === 0) return c.json({ error: "nothing to rename" }, 404);
+    return c.json({ updated: r.updated, ...(await afterFileEdit(c.env, c.executionCtx, files)) });
+  } catch (e) {
+    if (e instanceof HomeError) return c.json({ error: e.message }, 502);
+    throw e;
+  }
+});
+
+/** After tags were written on the server: let Navidrome re-read them and tell the user about songs that were not found. */
+async function afterFileEdit(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, files: { written: number; skipped: string[] } | null) {
+  if (!files) return { ok: true, filesUpdated: false, warning: "" };
+  if (nasEnabled(env)) ctx.waitUntil(startScan(env).catch(() => undefined));
+  const warning = files.skipped.length
+    ? `${files.skipped.length} song${files.skipped.length === 1 ? " was" : "s were"} not found in the file library, so only the app changed for ${files.skipped.length === 1 ? "it" : "them"}.`
+    : "";
+  return { ok: true, filesUpdated: files.written > 0, warning };
+}
+
 app.delete("/api/tracks/:id", async (c) => {
   const fam = c.get("family").familyId;
   const row = await c.env.DB.prepare("SELECT source, source_key, art_key FROM tracks WHERE id = ? AND family_id = ? AND deleted = 0")
@@ -218,33 +283,31 @@ app.get("/api/nas/scan", async (c) => {
 
 app.get("/api/beets/runs", async (c) => c.json({ runs: await listRuns(c.env.DB, c.get("family").familyId) }));
 
-/** Requests a Beets import (owner only); the server script picks it up within a minute. */
-app.post("/api/beets/run", async (c) => {
+/** Whether the home server API answers. The app disables editing, Organize and enrich while it does not. */
+app.get("/api/server/status", async (c) => c.json(await homeStatus(c.env)));
+
+/** Starts an import or an enrich on the home server (owner only). Fails at once, with the reason, if it is unreachable. */
+async function startOnHome(c: import("hono").Context<{ Bindings: Env; Variables: Vars }>, kind: "import" | "enrich") {
   if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
-  if (!c.env.BEETS_AGENT_KEY) return c.json({ error: "Beets runs are not configured" }, 501);
-  return c.json(await requestRun(c.env.DB, c.get("family").familyId, c.get("user").uid), 201);
-});
+  if (!homeConfigured(c.env)) return c.json({ error: "The home server API is not configured." }, 501);
+  const { run, created } = await beginRun(c.env.DB, c.get("family").familyId, c.get("user").uid, kind);
+  if (created) {
+    try {
+      await homeStartJob(c.env, run.id, kind);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not start the job";
+      await failRun(c.env.DB, run.id, msg);
+      return c.json({ error: msg }, 502);
+    }
+  }
+  return c.json(run, 201);
+}
 
-/** Polled by the home-server script: the id of a requested run (now marked running) as text, or 204. */
-app.post("/api/beets/agent/poll", async (c) => {
-  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
-  const id = await claimRun(c.env.DB);
-  return id ? c.text(id) : c.body(null, 204);
-});
+/** Starts a Beets import now (the Organize button). */
+app.post("/api/beets/run", (c) => startOnHome(c, "import"));
 
-/** Requests an enrich run now (owner only), e.g. when the nightly one did not happen; beets-agent.sh picks it up. */
-app.post("/api/beets/enrich", async (c) => {
-  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
-  if (!c.env.BEETS_AGENT_KEY) return c.json({ error: "Beets runs are not configured" }, 501);
-  return c.json(await requestEnrich(c.env.DB, c.get("family").familyId, c.get("user").uid), 201);
-});
-
-/** Polled by beets-agent.sh after the import poll: the id of a requested enrich run (now marked running) as text, or 204. */
-app.post("/api/beets/agent/poll-enrich", async (c) => {
-  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
-  const id = await claimEnrich(c.env.DB);
-  return id ? c.text(id) : c.body(null, 204);
-});
+/** Starts an enrich now (cover art and genres), e.g. when the nightly one did not happen. */
+app.post("/api/beets/enrich", (c) => startOnHome(c, "enrich"));
 
 /** The nightly enrich script announces a run: its id as text. It reports the result through /report like an import. */
 app.post("/api/beets/agent/enrich-start", async (c) => {

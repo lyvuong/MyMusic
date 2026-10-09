@@ -47,10 +47,16 @@ export async function syncPage(env: Env, familyId: string, offset: number, run: 
     "INSERT INTO tracks (id, family_id, source, source_key, title, artist, album, duration, track_no, art_key, size, etag, mime, updated_at, sync_seen) " +
       "VALUES (?, ?, 'nas', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(family_id, source, source_key) DO UPDATE SET " +
-      "updated_at = CASE WHEN tracks.deleted = 1 OR tracks.title IS NOT excluded.title OR tracks.artist IS NOT excluded.artist OR tracks.album IS NOT excluded.album " +
-      "OR tracks.duration IS NOT excluded.duration OR tracks.track_no IS NOT excluded.track_no OR tracks.art_key IS NOT excluded.art_key OR tracks.size IS NOT excluded.size " +
+      // Songs edited in the web app (edited = 1) keep their title, artist, album and track number.
+      "updated_at = CASE WHEN tracks.deleted = 1 " +
+      "OR (tracks.edited = 0 AND (tracks.title IS NOT excluded.title OR tracks.artist IS NOT excluded.artist OR tracks.album IS NOT excluded.album OR tracks.track_no IS NOT excluded.track_no)) " +
+      "OR tracks.duration IS NOT excluded.duration OR tracks.art_key IS NOT excluded.art_key OR tracks.size IS NOT excluded.size " +
       "THEN excluded.updated_at ELSE tracks.updated_at END, " +
-      "title = excluded.title, artist = excluded.artist, album = excluded.album, duration = excluded.duration, track_no = excluded.track_no, " +
+      "title = CASE WHEN tracks.edited = 1 THEN tracks.title ELSE excluded.title END, " +
+      "artist = CASE WHEN tracks.edited = 1 THEN tracks.artist ELSE excluded.artist END, " +
+      "album = CASE WHEN tracks.edited = 1 THEN tracks.album ELSE excluded.album END, " +
+      "duration = excluded.duration, " +
+      "track_no = CASE WHEN tracks.edited = 1 THEN tracks.track_no ELSE excluded.track_no END, " +
       "art_key = excluded.art_key, size = excluded.size, etag = excluded.etag, mime = excluded.mime, deleted = 0, sync_seen = excluded.sync_seen",
   );
   const stmts = songs.map((s) =>
