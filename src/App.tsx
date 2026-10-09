@@ -460,6 +460,7 @@ function Family({ family, uid, reload, refresh }: { family: FamilyInfo; uid: str
         </p>
       )}
       <hr />
+      <p><small className="muted">Version {__APP_VERSION__}</small></p>
       <button className="link" onClick={() => signOut()}>Sign out</button>{" "}
       <button className="link danger" onClick={async () => { if (confirm("Delete your account? You leave the family and your playlists are deleted.")) { await api.deleteAccount(); await auth.currentUser?.delete().catch(() => signOut()); } }}>Delete my account</button>
     </>

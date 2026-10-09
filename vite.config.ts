@@ -1,9 +1,14 @@
 import react from "@vitejs/plugin-react";
+import { execSync } from "node:child_process";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
+// Shown in the Family tab so you can tell which build you are running: the commit and the build time.
+const commit = (process.env.GITHUB_SHA ?? (() => { try { return execSync("git rev-parse HEAD").toString(); } catch { return "dev"; } })()).trim().slice(0, 7);
+
 // The Worker serves dist/ as static assets (wrangler.jsonc) and handles /api/*.
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(`${commit} · ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`) },
   plugins: [
     react(),
     VitePWA({
