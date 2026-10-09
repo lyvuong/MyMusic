@@ -14,6 +14,8 @@ interface PlayerValue {
   next: () => void;
   prev: () => void;
   seek: (seconds: number) => void;
+  /** Stops playback and hides the player bar. */
+  close: () => void;
 }
 
 const Ctx = createContext<PlayerValue | null>(null);
@@ -58,6 +60,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const seek = useCallback((s: number) => {
     audio.current!.currentTime = s;
   }, []);
+  const close = useCallback(() => {
+    const el = audio.current!;
+    el.pause();
+    el.removeAttribute("src");
+    el.load();
+    setQueue([]);
+    setIndex(-1);
+    setPosition(0);
+    setDuration(0);
+    if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
+  }, []);
   const play = useCallback((q: Track[], i: number) => {
     setQueue(q);
     setIndex(i);
@@ -83,8 +96,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [current, next, prev]);
 
   const value = useMemo(
-    () => ({ current, playing, position, duration, play, toggle, next, prev, seek }),
-    [current, playing, position, duration, play, toggle, next, prev, seek],
+    () => ({ current, playing, position, duration, play, toggle, next, prev, seek, close }),
+    [current, playing, position, duration, play, toggle, next, prev, seek, close],
   );
 
   return (
@@ -129,6 +142,7 @@ export function PlayerBar() {
           <button onClick={p.prev} aria-label="Previous">⏮</button>
           <button className="primary big" onClick={p.toggle} aria-label={p.playing ? "Pause" : "Play"}>{p.playing ? "⏸" : "▶"}</button>
           <button onClick={p.next} aria-label="Next">⏭</button>
+          <button onClick={p.close} aria-label="Close player" title="Close player">✕</button>
         </div>
         <div className="player-seek">
           <span>{fmt(p.position)}</span>
