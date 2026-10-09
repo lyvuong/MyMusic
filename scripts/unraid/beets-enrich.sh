@@ -9,8 +9,12 @@
 LOG="/mnt/user/appdata/beets/enrich.log"
 
 # Never overlap with an import (the Organize button or anything else holding this lock); wait up to 2 hours.
+echo "=== $(date '+%Y-%m-%d %H:%M:%S') waiting for the import lock ===" >> "$LOG"
 exec 9>/tmp/beets-import.lock
-flock -w 7200 9 || exit 0
+if ! flock -w 7200 9; then
+  echo "=== $(date '+%Y-%m-%d %H:%M:%S') gave up: an import held the lock for 2 hours ===" >> "$LOG"
+  exit 1
+fi
 
 {
   echo "=== $(date '+%Y-%m-%d %H:%M:%S') enrich start ==="
