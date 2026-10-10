@@ -72,6 +72,13 @@ class LibraryPage extends StatefulWidget {
 
 class _LibraryPageState extends State<LibraryPage> {
   String _query = '';
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -90,11 +97,22 @@ class _LibraryPageState extends State<LibraryPage> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: TextField(
+                controller: _search,
                 decoration: InputDecoration(
                   hintText: 'Search your music',
                   prefixIcon: const Icon(Icons.search),
                   border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(28))),
-                  suffixIcon: app.syncing ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))) : null,
+                  suffixIcon: _query.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.close),
+                          tooltip: 'Clear search',
+                          onPressed: () {
+                            _search.clear();
+                            setState(() => _query = '');
+                          },
+                        )
+                      : app.syncing
+                          ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))) : null,
                 ),
                 onChanged: (v) => setState(() => _query = v),
               ),

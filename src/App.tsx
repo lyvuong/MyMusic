@@ -421,7 +421,16 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
     <>
       {dialog}
       {toastEl}
-      <input className="search" placeholder="Search your music" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="search-box">
+        <input
+          className="search"
+          placeholder="Search your music"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && setQ("")}
+        />
+        {q && <button className="clear" aria-label="Clear search" title="Clear search" onClick={() => setQ("")}>✕</button>}
+      </div>
       <div className="seg" role="tablist">
         {views.map(([k, label]) => (
           <button key={k} role="tab" aria-selected={view === k} className={view === k ? "active" : ""} onClick={() => setView(k)}>{label}</button>
