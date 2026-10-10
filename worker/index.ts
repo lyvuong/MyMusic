@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { signedQuery, verifySigned } from "./cast";
 import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
 import { findAlbumArt, findArtistImage } from "./artwork";
@@ -13,6 +15,10 @@ import { ingest } from "./upload";
 type Vars = { user: User; family: Membership };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
+// Cast devices fetch media themselves (cross-origin, with Range): answer CORS before the auth check.
+app.use("/api/stream/*", cors({ origin: "*", allowHeaders: ["Range", "Authorization"], exposeHeaders: ["Content-Length", "Content-Range", "Accept-Ranges"] }));
+app.use("/api/art/*", cors({ origin: "*", allowHeaders: ["Range", "Authorization"], exposeHeaders: ["Content-Length", "Content-Range", "Accept-Ranges"] }));
+
 // Auth: Authorization bearer token. Media URLs (stream/art) also accept ?access_token= because
 // <audio>/<img> elements can't send headers.
 app.use("/api/*", async (c, next) => {
@@ -20,6 +26,17 @@ app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/beets/agent/")) return next(); // the home-server script; authenticates with BEETS_AGENT_KEY
   const url = new URL(c.req.url);
   const mediaPath = /^\/api\/(stream|art|artist-art)\//.test(url.pathname);
+  // A signed URL (handed out for casting) stands in for the login, for that one track's audio or cover.
+  const sig = mediaPath ? url.searchParams.get("sig") : null;
+  if (sig) {
+    const m = /^\/api\/(stream|art)\/([^/]+)$/.exec(url.pathname);
+    const fam = url.searchParams.get("fam") ?? "";
+    if (m && fam && await verifySigned(c.env.DB, m[1]!, m[2]!, fam, Number(url.searchParams.get("exp")), sig)) {
+      c.set("family", { familyId: fam, role: "member" });
+      return next();
+    }
+    return c.json({ error: "unauthorized" }, 401);
+  }
   const header = c.req.header("Authorization")?.replace(/^Bearer /, "");
   const token = header ?? (mediaPath ? url.searchParams.get("access_token") : null);
   if (!token) return c.json({ error: "unauthorized" }, 401);
@@ -33,12 +50,13 @@ app.use("/api/*", async (c, next) => {
 
 /** Routes that need the caller to be in a family. */
 const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: Vars }>, next: () => Promise<void>) => {
+  if (c.get("family")) return next(); // already set from a signed media URL
   const m = await membershipOf(c.env.DB, c.get("user").uid);
   if (!m) return c.json({ error: "no family" }, 403);
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/cast/*"]) {
   app.use(p, needFamily);
 }
 
@@ -293,6 +311,33 @@ app.get("/api/stream/:id", async (c) => {
   if (row.source === "r2") return serveR2(c.env.MUSIC, row.source_key, c.req.raw);
   if (!nasEnabled(c.env)) return c.json({ error: "nas not configured" }, 501);
   return proxyStream(c.env, row.source_key, c.req.raw);
+});
+
+/**
+ * Signed, absolute stream and cover URLs for a cast device (valid for 12 hours), for up to 500 tracks of the caller's
+ * family. The cast device fetches them directly, so they carry their own proof instead of the login token.
+ */
+app.post("/api/cast/media", async (c) => {
+  const b = await c.req.json<{ ids?: unknown }>().catch(() => null);
+  const ids = Array.isArray(b?.ids) ? [...new Set((b!.ids as unknown[]).filter((x): x is string => typeof x === "string"))].slice(0, 500) : [];
+  if (ids.length === 0) return c.json({ error: "bad request" }, 400);
+  const fam = c.get("family").familyId;
+  const rows: { id: string; art_key: string | null }[] = [];
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90);
+    const r = await c.env.DB.prepare(`SELECT id, art_key FROM tracks WHERE family_id = ? AND deleted = 0 AND id IN (${part.map(() => "?").join(",")})`)
+      .bind(fam, ...part).all<{ id: string; art_key: string | null }>();
+    rows.push(...r.results);
+  }
+  const origin = new URL(c.req.url).origin;
+  const items: Record<string, { stream: string; art: string | null }> = {};
+  for (const r of rows) {
+    items[r.id] = {
+      stream: `${origin}/api/stream/${r.id}?${await signedQuery(c.env.DB, "stream", r.id, fam)}`,
+      art: r.art_key ? `${origin}/api/art/${r.id}?${await signedQuery(c.env.DB, "art", r.id, fam)}` : null,
+    };
+  }
+  return c.json({ items });
 });
 
 /** Imports the NAS library page by page (owner only); the client repeats with `next` until `done`. */
