@@ -3,12 +3,12 @@ import type { Track } from "../shared/types";
 import { api } from "./api";
 
 /** Resolves a token-bearing media URL for an id; null until ready or when there is none. */
-export function useMediaUrl(kind: "art" | "artist-art", id: string | null) {
+export function useMediaUrl(kind: "art" | "artist-art", id: string | null, version?: number) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     setUrl(null);
-    if (id) void api.mediaUrl(kind, id).then(setUrl);
-  }, [kind, id]);
+    if (id) void api.mediaUrl(kind, id, version).then(setUrl);
+  }, [kind, id, version]);
   return url;
 }
 
@@ -21,7 +21,7 @@ const hue = (s: string) => {
 
 /** Cover art for a track or album; falls back to a colour block with a note when there is no image. */
 export function Cover({ track, seed, className = "" }: { track?: Track | null; seed: string; className?: string }) {
-  const url = useMediaUrl("art", track?.hasArt ? track.id : null);
+  const url = useMediaUrl("art", track?.hasArt ? track.id : null, track?.updatedAt);
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [url]);
   return (

@@ -74,7 +74,8 @@ export const api = {
   deleteTrack: (id: string) => call<void>("DELETE", `/api/tracks/${id}`),
 
   /** URL for <audio>/<img>, which cannot send an Authorization header. */
-  async mediaUrl(kind: "stream" | "art" | "artist-art", id: string): Promise<string> {
-    return `/api/${kind}/${id}?access_token=${encodeURIComponent(await token())}`;
+  async mediaUrl(kind: "stream" | "art" | "artist-art", id: string, version?: number): Promise<string> {
+    // `v` only changes the URL, so a replaced cover is not served from the browser cache.
+    return `/api/${kind}/${id}?access_token=${encodeURIComponent(await token())}${version ? `&v=${version}` : ""}`;
   },
 };

@@ -83,7 +83,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const meta = { title: current.title, artist: current.artist, album: current.album };
     navigator.mediaSession.metadata = new MediaMetadata(meta);
     if (current.hasArt) {
-      void api.mediaUrl("art", current.id).then((src) => {
+      void api.mediaUrl("art", current.id, current.updatedAt).then((src) => {
         if (navigator.mediaSession.metadata?.title === meta.title) {
           navigator.mediaSession.metadata = new MediaMetadata({ ...meta, artwork: [{ src: new URL(src, location.origin).href, sizes: "600x600" }] });
         }
