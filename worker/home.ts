@@ -1,4 +1,4 @@
-import type { ServerStatus } from "../shared/types";
+import type { ServerStatus, YoutubeInfo } from "../shared/types";
 
 /**
  * The API running on the home server (scripts/unraid/mymusic-api). The Worker reaches it through a Cloudflare Tunnel,
@@ -83,7 +83,12 @@ export function homeCover(env: Env, album: string, image: string): Promise<EditR
   return call<EditResult>(env, "POST", "/cover", { album, image }, 95000);
 }
 
-/** Starts a long job (an import or an enrich); the server reports progress and the result to the Worker by run id. */
-export async function homeStartJob(env: Env, id: string, kind: "import" | "enrich"): Promise<void> {
-  await call<{ id: string }>(env, "POST", "/jobs", { id, kind }, 15000);
+/** Starts a long job (an import, an enrich or a YouTube download); the server reports progress and the result to the Worker by run id. */
+export async function homeStartJob(env: Env, id: string, kind: "import" | "enrich" | "youtube", extra: Record<string, string> = {}): Promise<void> {
+  await call<{ id: string }>(env, "POST", "/jobs", { ...extra, id, kind }, 15000);
+}
+
+/** Reads a YouTube video's title, artist and length without downloading it (a few seconds). */
+export function homeYoutubeInfo(env: Env, url: string): Promise<YoutubeInfo> {
+  return call<YoutubeInfo>(env, "POST", "/yt-info", { url }, 70000);
 }

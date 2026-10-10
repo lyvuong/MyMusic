@@ -6,7 +6,7 @@ import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, r
 import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, failRun, finishRun, listRuns, startEnrich, updateProgress } from "./beets";
-import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, type TagOp } from "./home";
+import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { suggest, SuggestError } from "./suggest";
@@ -56,7 +56,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/cast/*"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/cast/*"]) {
   app.use(p, needFamily);
 }
 
@@ -413,6 +413,52 @@ app.post("/api/beets/run", (c) => startOnHome(c, "import"));
 
 /** Starts an enrich now (cover art and genres), e.g. when the nightly one did not happen. */
 app.post("/api/beets/enrich", (c) => startOnHome(c, "enrich"));
+
+const youtubeOwner = (c: import("hono").Context<{ Bindings: Env; Variables: Vars }>) =>
+  c.get("family").role !== "owner" ? c.json({ error: "owner only" }, 403) : !homeConfigured(c.env) ? c.json({ error: "The home server API is not configured." }, 501) : null;
+
+/** Reads a YouTube link's title and artist (owner only), so the owner can confirm or edit them before downloading. */
+app.post("/api/beets/youtube/info", async (c) => {
+  const denied = youtubeOwner(c);
+  if (denied) return denied;
+  const { url } = await c.req.json<{ url?: string }>().catch(() => ({ url: undefined }));
+  if (typeof url !== "string" || !url.trim() || url.length > 300) return c.json({ error: "Paste a YouTube link." }, 400);
+  try {
+    return c.json(await homeYoutubeInfo(c.env, url.trim()));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "Could not read that link" }, 502);
+  }
+});
+
+/** Downloads one YouTube video's audio on the home server and imports it with the confirmed names (owner only). */
+app.post("/api/beets/youtube", async (c) => {
+  const denied = youtubeOwner(c);
+  if (denied) return denied;
+  const b = await c.req.json<{ url?: string; title?: string; artist?: string; album?: string }>().catch(() => ({}) as Record<string, undefined>);
+  const url = typeof b.url === "string" ? b.url.trim() : "";
+  const title = typeof b.title === "string" ? b.title.trim().slice(0, 200) : "";
+  const artist = typeof b.artist === "string" ? b.artist.trim().slice(0, 200) : "";
+  const album = typeof b.album === "string" ? b.album.trim().slice(0, 200) : "";
+  if (!url || url.length > 300 || !title || !artist) return c.json({ error: "A link, a title and an artist are required." }, 400);
+  const fam = c.get("family").familyId;
+  const uid = c.get("user").uid;
+  let { run, created } = await beginRun(c.env.DB, fam, uid, "youtube");
+  if (!created) {
+    // Not a second request to coalesce (it carries other names): refuse while one is really running, else close the stale record.
+    const st = await homeStatus(c.env);
+    if (!st.ok || st.busy === "youtube") return c.json({ error: "A YouTube import is already running. Wait for it to finish." }, 409);
+    await failRun(c.env.DB, run.id, "The server is no longer running this job (it restarted or its report was lost).");
+    ({ run, created } = await beginRun(c.env.DB, fam, uid, "youtube"));
+  }
+  try {
+    await homeStartJob(c.env, run.id, "youtube", { url, title, artist, album });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Could not start the job";
+    await failRun(c.env.DB, run.id, msg);
+    return c.json({ error: msg }, 502);
+  }
+  return c.json(run, 201);
+});
 
 /** The nightly enrich script announces a run: its id as text. It reports the result through /report like an import. */
 app.post("/api/beets/agent/enrich-start", async (c) => {

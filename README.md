@@ -63,7 +63,7 @@ Host `Lincoln-Unraid`. Music lives in the share `/mnt/user/Music`. The Worker ta
 Flow: drop files in `/mnt/user/Music/_inbox` (File Browser) -> press **Organize** in the web app -> Beets organizes them into `/mnt/user/Music/Artist/Album/` -> Navidrome rescans -> the app syncs the library and shows them.
 
 ### Compose stack
-One `compose.yaml` runs four containers: `navidrome`, `filebrowser`, `beets` and `mymusic-api` (all `restart: unless-stopped`; `:latest` images except `mymusic-api`, which is `python:3.12-alpine` running the script from the repo). Beets runs as root (`PUID=0`, `PGID=0`, `TZ=America/New_York`) like File Browser, so it can write to files File Browser uploaded.
+One `compose.yaml` runs five containers: `navidrome`, `filebrowser`, `beets`, `yt-dlp` and `mymusic-api` (all `restart: unless-stopped`; `:latest` images except `mymusic-api`, which is `python:3.12-alpine` running the script from the repo). Beets runs as root (`PUID=0`, `PGID=0`, `TZ=America/New_York`) like File Browser, so it can write to files File Browser uploaded.
 
 ### Beets (container `beets`, image `lscr.io/linuxserver/beets:latest`)
 - Mounts: `/mnt/user/appdata/beets` -> `/config`, `/mnt/user/Music` -> `/music`, `/mnt/user/Music/_inbox` -> `/downloads`.
@@ -86,7 +86,8 @@ A small Python service (`scripts/unraid/mymusic-api/server.py`, standard library
 | `GET /health` | Checks the `beets` container answers; used by the app to enable or disable the features below |
 | `POST /edit` | Writes edited names into the files and the Beets library, and waits for the result |
 | `POST /cover` | Writes an album's cover image as `cover.jpg` into the folders of its songs (what Navidrome looks for first) and records it in the Beets library |
-| `POST /jobs` | Starts an `import` or an `enrich` and returns at once; progress and result are posted back to the Worker (`/api/beets/agent/progress` and `/report`) under the run id |
+| `POST /yt-info` | Reads a YouTube link's title, artist and length with yt-dlp, without downloading it |
+| `POST /jobs` | Starts an `import`, an `enrich` or a `youtube` download and returns at once; progress and result are posted back to the Worker (`/api/beets/agent/progress` and `/report`) under the run id |
 
 There is **no fallback**: if the server cannot be reached, the app disables Organize, enrich and name editing and shows the reason (checked on load, every minute and when the window gets focus). One job runs at a time; edits wait up to 10 seconds for the library lock and are otherwise refused. A run that never reports back (server died) is marked failed after 2 hours (4 for enrich). The `/api/beets/agent/*` endpoints on the Worker skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
 
@@ -114,7 +115,23 @@ One-time setup:
 4. `HOME_API_URL` in `wrangler.jsonc` is that hostname; pushing to `main` deploys it.
 5. The Navidrome user in `NAS_USER` must be an **admin**, or "start scan" is refused and the app cannot trigger rescans after an import or an edit.
 
-Logs on the server (all in `/mnt/user/appdata/beets/`): `auto-import.log` (imports), `enrich.log` (enrich), `tag-edits.log` (name edits). `docker logs mymusic-api` shows the API's own requests.
+### YouTube import (container `yt-dlp`)
+Organize has an "Add a song from YouTube" box (owner only): paste a link, **Look up** shows the title, artist and album yt-dlp found, edit them if needed, **Add to library**. The server downloads the audio as mp3 (`yt-dlp` + `ffmpeg`, in the `yt-dlp` container), writes your names into the tags, and imports it into Beets *as it is* (`beet import -A -s`, no MusicBrainz matching, so the names stay exactly as confirmed); then the app scans Navidrome and syncs like after an Organize. One video per link (playlists are refused), up to 2 hours. It holds the same library lock as Organize and enrich, so it never overlaps them.
+
+Add this service next to `beets`, then `docker compose up -d yt-dlp` (it reinstalls the newest yt-dlp every time it starts, because YouTube changes often; `docker restart yt-dlp` fixes "unable to extract" errors):
+```yaml
+yt-dlp:
+  image: python:3.12-alpine
+  container_name: yt-dlp
+  restart: unless-stopped
+  command: sh -c "apk add --no-cache ffmpeg nodejs >/dev/null && pip install -q --no-cache-dir -U 'yt-dlp[default]' && exec sleep infinity"
+  environment: [TZ=America/New_York]
+  volumes:
+    - /mnt/user/Music/_inbox:/downloads                # read-write: downloads land in /downloads/_youtube/<run id>
+```
+Check it: `docker exec yt-dlp yt-dlp --version`, then try a link in the web app. If yt-dlp says it needs a JavaScript runtime, set `YTDLP_ARGS=--js-runtimes node` in the `mymusic-api` environment and restart it. Downloads go to a private folder `_inbox/_youtube/<run id>` that is removed afterwards. Downloading from YouTube may go against its terms of service and copyright; use it for your own purposes only.
+
+Logs on the server (all in `/mnt/user/appdata/beets/`): `auto-import.log` (imports and YouTube imports), `enrich.log` (enrich), `tag-edits.log` (name edits). `docker logs mymusic-api` shows the API's own requests.
 
 ### Navidrome (container `navidrome`, image `deluan/navidrome:latest`)
 - Port `4533`. Data/db/cache: `/mnt/user/appdata/navidrome` -> `/data`. Music: `/mnt/user/Music` -> `/music` **read-only** (it never writes tags or deletes files).

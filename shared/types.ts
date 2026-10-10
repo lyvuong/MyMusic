@@ -44,8 +44,8 @@ export interface Suggestion {
 /** One Beets import on the home server, requested from the web app. */
 export interface BeetsRun {
   id: string;
-  /** 'import' is the Organize button; 'enrich' is the nightly art/genre job. */
-  kind: "import" | "enrich";
+  /** 'import' is the Organize button; 'enrich' is the nightly art/genre job; 'youtube' adds one video's audio. */
+  kind: "import" | "enrich" | "youtube";
   status: "requested" | "running" | "done" | "failed";
   requestedAt: number;
   startedAt: number | null;
@@ -58,6 +58,18 @@ export interface BeetsRun {
   exitCode: number | null;
   /** The end of the import output. */
   log: string;
+}
+
+/** What the home server read from a YouTube link, to be confirmed or edited before the audio is downloaded. */
+export interface YoutubeInfo {
+  title: string;
+  artist: string;
+  album: string;
+  /** Seconds. */
+  duration: number;
+  thumbnail: string | null;
+  /** Longer than the server accepts. */
+  tooLong: boolean;
 }
 
 /** Whether the home server API (imports, enrich, writing names into files) can be reached. */

@@ -4,11 +4,14 @@
 The Worker (Cloudflare) calls this through a Cloudflare Tunnel; nothing here polls. Every request needs the shared key
 in the X-Agent-Key header. Endpoints (fixed; no paths or commands ever come from a request):
 
-  GET  /health   -> {"ok": true, "busy": null | "import" | "enrich"}   checks that the beets container answers
+  GET  /health   -> {"ok": true, "busy": null | "import" | "enrich" | "youtube"}   checks that the beets container answers
   POST /edit     {"ops": [...]}  writes edited names into the files and the Beets library, waits for the result
   POST /cover    {"album": "...", "image": "<base64 jpeg>"}  writes cover.jpg into the folders of that album (embeds it when a folder is shared)
   POST /jobs     {"id": "...", "kind": "import" | "enrich"}  starts a long job and returns at once (202); progress and the
                  result are posted to the Worker (/api/beets/agent/progress and /report) under that run id
+  POST /yt-info  {"url": "https://youtu.be/..."}  looks a YouTube video up (title, artist, duration) without downloading it
+  POST /jobs     {"id": "...", "kind": "youtube", "url": "...", "title": "...", "artist": "...", "album": ""}  downloads the
+                 audio with yt-dlp (in the yt-dlp container), tags it as given and imports it into Beets as it is
 
 Needs: the docker CLI and /var/run/docker.sock (it runs `docker exec beets ...`), the inbox folder (read only, to count
 files) and the host's /tmp (to share /tmp/beets-import.lock with beets-enrich.sh). See "Beets runs from the web app"
@@ -18,6 +21,7 @@ import fcntl
 import hmac
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -33,6 +37,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 KEY = (os.environ.get("AGENT_KEY") or open(os.environ.get("KEY_FILE", "/run/mymusic-agent.key")).read()).strip()
 WORKER = os.environ.get("WORKER_URL", "https://mymusic.lyvuong.workers.dev").rstrip("/")
 BEETS = os.environ.get("BEETS_CONTAINER", "beets")
+YTDLP = os.environ.get("YTDLP_CONTAINER", "yt-dlp")  # has yt-dlp + ffmpeg; mounts the inbox read-write as /downloads
+YTDLP_ARGS = shlex.split(os.environ.get("YTDLP_ARGS", ""))  # extra yt-dlp options, e.g. "--js-runtimes node" if YouTube needs one
 DOCKER = shlex.split(os.environ.get("DOCKER_CMD", "docker"))
 INBOX = os.environ.get("INBOX", "/inbox")  # the folder Beets sees as /downloads
 LOCK_PATH = os.environ.get("LOCK_PATH", "/host-tmp/beets-import.lock")
@@ -309,7 +315,7 @@ def append_file(path, text):
         log("cannot write %s: %s" % (path, e))
 
 
-def run_import(run_id):
+def run_import(run_id, payload=None):
     """The Organize button: pass 1 groups files into albums by their tags, pass 2 imports leftovers one by one.
     Only musicbrainz, scrub and fromfilename load, so it is fast; enrich adds art and genres."""
     before = count_inbox()
@@ -352,7 +358,7 @@ def run_import(run_id):
     report(run_id, exit_code == 0, exit_code, text or "(no output: nothing to import)", before, count_inbox())
 
 
-def run_enrich(run_id):
+def run_enrich(run_id, payload=None):
     """Vietnamese tag fixes, cover art, art embedded in the files, and genres for albums that still lack them
     (same steps as beets-enrich.sh)."""
     lines = []
@@ -391,12 +397,140 @@ def run_enrich(run_id):
     report(run_id, exit_code == 0, exit_code, text)
 
 
-JOBS = {"import": run_import, "enrich": run_enrich}
+# ---- YouTube --------------------------------------------------------------------------------------------------------
+
+YT_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
+YT_MAX_SECONDS = 2 * 3600
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def clean_url(url):
+    """The link when it is one https YouTube video (not a playlist or channel), else None."""
+    if not isinstance(url, str) or len(url) > 300 or any(c.isspace() or ord(c) < 32 for c in url):
+        return None
+    try:
+        u = urllib.parse.urlsplit(url)
+    except ValueError:
+        return None
+    host = (u.hostname or "").lower()
+    if u.scheme != "https" or host not in YT_HOSTS or u.username or u.password:
+        return None
+    if host == "youtu.be":
+        ok = re.match(r"^/[\w-]+$", u.path) is not None
+    else:
+        ok = (u.path == "/watch" and bool(urllib.parse.parse_qs(u.query).get("v"))) or re.match(r"^/(shorts|live|embed)/[\w-]+$", u.path) is not None
+    return url if ok else None
+
+
+def clean_tag(value, limit=200):
+    s = "".join(c for c in str(value or "") if c >= " " and c != "\x7f")
+    return re.sub(r"\s+", " ", s).strip()[:limit]
+
+
+def yt_info(url):
+    """Asks yt-dlp about one video without downloading it. Returns (status, body)."""
+    try:
+        r = subprocess.run(
+            DOCKER + ["exec", YTDLP, "yt-dlp"] + YTDLP_ARGS + ["--dump-single-json", "--no-playlist", "--no-warnings", "--skip-download", "--", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return 504, {"error": "YouTube did not answer in time. Try again."}
+    except OSError as e:
+        return 503, {"error": "Cannot run docker: %s" % e}
+    if r.returncode != 0:
+        last = (r.stderr.strip().splitlines() or ["no output"])[-1]
+        return 502, {"error": "Could not read that video: %s" % last[:300]}
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        return 502, {"error": "yt-dlp returned something unreadable."}
+    if not isinstance(d, dict) or d.get("_type") == "playlist":
+        return 400, {"error": "That link is a playlist; paste the link of one video."}
+    title = clean_tag(d.get("track") or d.get("title"))
+    artist = clean_tag(d.get("artist") or d.get("creator") or "")
+    if not artist and " - " in title:  # "Artist - Title" is the usual shape of a music upload's title
+        artist, title = (clean_tag(x) for x in title.split(" - ", 1))
+    if not artist:
+        artist = clean_tag(d.get("uploader") or d.get("channel") or "")
+    artist = re.sub(r"\s*-\s*Topic$", "", artist)
+    duration = int(d.get("duration") or 0)
+    return 200, {
+        "title": title,
+        "artist": artist,
+        "album": clean_tag(d.get("album") or ""),
+        "duration": duration,
+        "thumbnail": d.get("thumbnail") if isinstance(d.get("thumbnail"), str) else None,
+        "tooLong": duration > YT_MAX_SECONDS,
+    }
+
+
+def mp3s_in(folder):
+    r = subprocess.run(DOCKER + ["exec", YTDLP, "find", folder, "-type", "f", "-name", "*.mp3"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return r.stdout.split()
+
+
+def run_youtube(run_id, payload):
+    """Downloads one video's audio as mp3 into a private inbox sub-folder, tags it as the owner confirmed and imports it
+    into Beets as it is (no MusicBrainz matching, so the names stay exactly as typed). Holds the Beets lock throughout,
+    so an Organize or the nightly enrich never touches the half-written file."""
+    title, artist, album = payload["title"], payload["artist"], payload["album"]
+    folder = "/downloads/_youtube/%s" % run_id
+    lines = ["YouTube import: %s - %s%s\n" % (artist, title, " [%s]" % album if album else "")]
+    exit_code = 0
+    meta = ["title=" + title, "artist=" + artist, "album_artist=" + artist] + (["album=" + album] if album else [])
+    pp_args = "ffmpeg:" + " ".join("-metadata " + shlex.quote(m) for m in meta)
+    steps = 2  # progress for the app: before = number of steps, now = steps still to do
+    try:
+        with beets_lock(3600):
+            worker_post("/api/beets/agent/progress", {"id": run_id, "before": steps, "now": steps})
+            r = subprocess.run(
+                DOCKER + ["exec", YTDLP, "yt-dlp"] + YTDLP_ARGS + ["-x", "--audio-format", "mp3", "--audio-quality", "0", "--no-playlist",
+                          "--embed-thumbnail", "--convert-thumbnails", "jpg", "--no-warnings",
+                          "--match-filter", "duration<=%d" % YT_MAX_SECONDS, "--postprocessor-args", pp_args,
+                          "-o", folder + "/%(id)s.%(ext)s", "--", payload["url"]],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800,
+            )
+            lines.append(r.stdout[-2000:] + r.stderr[-2000:])
+            if r.returncode or not mp3s_in(folder):
+                lines.append("Download failed (is the video longer than %d minutes, private, or blocked?).\n" % (YT_MAX_SECONDS // 60))
+                exit_code = r.returncode or 1
+            else:
+                worker_post("/api/beets/agent/progress", {"id": run_id, "before": steps, "now": steps - 1})
+                r = subprocess.run(
+                    DOCKER + ["exec", BEETS, "beet", "-p", "fromfilename", "import", "-A", "-s", "-q", folder],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
+                )
+                lines.append(r.stdout[-2000:] + r.stderr[-2000:])
+                if r.returncode:
+                    exit_code = r.returncode
+                elif mp3s_in(folder):
+                    lines.append("Beets skipped the file (a song with these tags is probably already in the library).\n")
+                    exit_code = 1
+                else:
+                    lines.append("Imported.\n")
+            subprocess.run(DOCKER + ["exec", YTDLP, "rm", "-rf", folder], capture_output=True)
+    except TimeoutError as e:
+        lines.append("Gave up: %s\n" % e)
+        exit_code = 1
+    except subprocess.TimeoutExpired:
+        lines.append("The download or import took too long and was stopped.\n")
+        exit_code = 1
+    except Exception as e:
+        lines.append("YouTube import failed: %s\n" % e)
+        exit_code = 1
+    text = "".join(lines)
+    append_file(os.path.join(APPDATA, "auto-import.log"), "=== %s youtube ===\n%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
+    report(run_id, exit_code == 0, exit_code, text)
+
+
+JOBS = {"import": run_import, "enrich": run_enrich, "youtube": run_youtube}
 current = None  # {"kind", "id"} of the job running now
 guard = threading.Lock()
 
 
-def start_job(kind, run_id):
+def start_job(kind, run_id, payload=None):
     global current
     with guard:
         if current:
@@ -406,7 +540,7 @@ def start_job(kind, run_id):
     def work():
         global current
         try:
-            JOBS[kind](run_id)
+            JOBS[kind](run_id, payload)
         except Exception as e:
             log("job %s crashed: %s" % (run_id, e))
             report(run_id, False, 1, "The job crashed: %s" % e)
@@ -528,11 +662,23 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(album, str) or not album.strip() or not isinstance(image, str) or not image:
                 return self.send(400, {"error": "album and image (base64) are required"})
             return self.send(*do_edit({"album": album, "image": image}, COVER_PY, "cover update"))
+        if self.path == "/yt-info":
+            url = clean_url(b.get("url"))
+            if not url:
+                return self.send(400, {"error": "Paste the link of one YouTube video (https://youtu.be/... or youtube.com/watch?v=...)."})
+            return self.send(*yt_info(url))
         if self.path == "/jobs":
             kind, run_id = b.get("kind"), b.get("id")
-            if kind not in JOBS or not isinstance(run_id, str) or not run_id:
-                return self.send(400, {"error": "kind must be import or enrich, with an id"})
-            ok, why = start_job(kind, run_id)
+            if kind not in JOBS or not isinstance(run_id, str) or not RUN_ID_RE.match(run_id):
+                return self.send(400, {"error": "kind must be import, enrich or youtube, with an id"})
+            payload = None
+            if kind == "youtube":
+                url = clean_url(b.get("url"))
+                title, artist, album = clean_tag(b.get("title")), clean_tag(b.get("artist")), clean_tag(b.get("album"))
+                if not url or not title or not artist:
+                    return self.send(400, {"error": "a YouTube video link, a title and an artist are required"})
+                payload = {"url": url, "title": title, "artist": artist, "album": album}
+            ok, why = start_job(kind, run_id, payload)
             return self.send(202, {"id": run_id}) if ok else self.send(409, {"error": why})
         self.send(404, {"error": "not found"})
 

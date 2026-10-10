@@ -36,12 +36,12 @@ const pruneRuns = (db: D1Database, familyId: string, kind: BeetsRun["kind"]) =>
  * Records a run that is about to start on the home server (status 'running'), or returns the one already going.
  * `created` tells the caller whether it still has to start the job.
  */
-export async function beginRun(db: D1Database, familyId: string, uid: string, kind: "import" | "enrich"): Promise<{ run: BeetsRun; created: boolean }> {
+export async function beginRun(db: D1Database, familyId: string, uid: string, kind: BeetsRun["kind"]): Promise<{ run: BeetsRun; created: boolean }> {
   const now = Date.now();
   await db.prepare(
     "UPDATE beets_runs SET status = 'failed', finished_at = ?, log = 'Timed out: no report from the server.' " +
       "WHERE family_id = ? AND kind = ? AND status IN ('requested','running') AND COALESCE(started_at, requested_at) < ?",
-  ).bind(now, familyId, kind, now - (kind === "import" ? STALE_MS : ENRICH_STALE_MS)).run();
+  ).bind(now, familyId, kind, now - (kind === "enrich" ? ENRICH_STALE_MS : STALE_MS)).run();
   const open = await db.prepare("SELECT * FROM beets_runs WHERE family_id = ? AND kind = ? AND status IN ('requested','running') ORDER BY requested_at DESC LIMIT 1")
     .bind(familyId, kind).first<RunRow>();
   if (open) return { run: toRun(open), created: false };
