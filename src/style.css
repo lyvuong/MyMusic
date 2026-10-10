@@ -173,6 +173,9 @@ button.star:hover:not(:disabled) { background: none; color: var(--accent); }
 .modal h3 { margin: 0; }
 .modal .field { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); }
 .modal .field input { font-size: 1rem; color: var(--fg); border-radius: 12px; width: 100%; }
+.modal .suggest { display: flex; flex-direction: column; border: 1px solid var(--border, rgb(128 128 128 / .3)); border-radius: 12px; overflow: hidden; }
+.modal .suggest button { text-align: left; border: 0; border-radius: 0; background: transparent; color: var(--fg); padding: 8px 12px; font-size: .95rem; }
+.modal .suggest button:hover, .modal .suggest button:focus-visible { background: rgb(128 128 128 / .15); }
 .modal .hint { margin: 0; font-size: .9rem; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .cast-note { color: var(--accent); font-size: .8rem; }

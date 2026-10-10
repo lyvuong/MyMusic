@@ -1,14 +1,40 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface EditField {
   key: string;
   label: string;
   value: string;
-  /** Existing names offered while typing (a datalist); free text is still allowed. */
+  /** Existing names matched against what is typed (a partial name is enough); free text is still allowed. */
   options?: string[];
   numeric?: boolean;
   /** Empty is rejected for this field. */
   required?: boolean;
+}
+
+/** Lowercase, no diacritics (đ -> d), words separated by single spaces: "Hương  Cần" and "huong can" compare equal. */
+const fold = (s: string) =>
+  s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+/** Existing names that match a partial entry, best first: starts with it, has every typed word start, contains it,
+ * or is a shorter form of it. The value being edited and an exact match are left out (the hint covers a match). */
+export function suggest(options: string[], value: string, limit = 6): string[] {
+  const q = fold(value);
+  if (!q) return [];
+  const words = q.split(" ");
+  const scored: { o: string; score: number }[] = [];
+  for (const o of options) {
+    if (o === value || o.trim() === value.trim()) continue;
+    const f = fold(o);
+    if (!f) continue;
+    const fw = f.split(" ");
+    const score = f.startsWith(q) ? 1
+      : words.every((w) => fw.some((x) => x.startsWith(w))) ? 2
+      : f.includes(q) ? 3
+      : f.length >= 3 && q.includes(f) ? 4
+      : 0;
+    if (score) scored.push({ o, score });
+  }
+  return scored.sort((a, b) => a.score - b.score || a.o.length - b.o.length || a.o.localeCompare(b.o)).slice(0, limit).map((x) => x.o);
 }
 
 interface Props {
@@ -25,7 +51,7 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(fields.map((f) => [f.key, f.value])));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const uid = useId();
+  const [focus, setFocus] = useState<string | null>(null);
   const first = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -67,10 +93,28 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
               lang="vi"
               autoComplete="off"
               value={values[f.key]}
-              list={f.options ? `${uid}-${f.key}` : undefined}
+              onFocus={() => setFocus(f.key)}
               onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
             />
-            {f.options && <datalist id={`${uid}-${f.key}`}>{f.options.map((o) => <option key={o} value={o} />)}</datalist>}
+            {f.options && focus === f.key && (() => {
+              // Before anything is typed, offer names similar to the current one (same words without accents or case).
+              const typed = values[f.key]!;
+              const list = suggest(f.options, typed).filter((o) => o !== f.value);
+              return list.length > 0 && (
+                <span className="suggest" role="listbox" aria-label={`Matching ${f.label.toLowerCase()}s`}>
+                  {list.map((o) => (
+                    <button
+                      key={o}
+                      type="button"
+                      role="option"
+                      aria-selected={false}
+                      // mousedown, so the pick lands before the input loses focus
+                      onMouseDown={(e) => { e.preventDefault(); setValues((v) => ({ ...v, [f.key]: o })); }}
+                    >{o}</button>
+                  ))}
+                </span>
+              );
+            })()}
           </label>
         ))}
         {h && <p className="muted hint">{h.text}</p>}
