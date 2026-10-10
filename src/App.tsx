@@ -197,8 +197,10 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
   const allArtists = useMemo(() => groupArtists(tracks), [tracks]);
   const [editing, setEditing] = useState<{ kind: "song"; track: Track } | { kind: "album" | "artist"; name: string } | null>(null);
   // An album or artist that no longer exists (renamed, merged, or its songs moved away): leave its page.
+  // Not while a rename is saving: the page's new name only appears in the list once the library has refreshed.
+  const renaming = useRef(false);
   useEffect(() => {
-    if (open && tracks.length > 0 && !detailAlbum && !detailArtist) setOpen(null);
+    if (!renaming.current && open && tracks.length > 0 && !detailAlbum && !detailArtist) setOpen(null);
   }, [open, tracks.length, detailAlbum, detailArtist]);
 
   const [selecting, setSelecting] = useState(false);
@@ -377,9 +379,16 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
         onSave={async (v) => {
           const to = nfc(v.name);
           const existing = groups.find((g) => g.name !== current && nfc(g.name) === to);
-          const r = await api.renameGroup(kind, current, to);
-          if (open?.kind === kind && open.key === current) setOpen({ kind, key: existing?.name ?? to });
-          await refresh();
+          renaming.current = true;
+          let r;
+          try {
+            r = await api.renameGroup(kind, current, to);
+            await refresh();
+            // Stay on the page under its new name (or the one it merged into), so more edits can follow.
+            if (open?.kind === kind && open.key === current) setOpen({ kind, key: existing?.name ?? to });
+          } finally {
+            renaming.current = false;
+          }
           flash(`${existing ? `Merged into ${existing.name}` : `Renamed to ${to}`}${r?.warning ? ` ${r.warning}` : ""}`);
         }}
       />
