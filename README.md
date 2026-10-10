@@ -85,6 +85,7 @@ A small Python service (`scripts/unraid/mymusic-api/server.py`, standard library
 |---|---|
 | `GET /health` | Checks the `beets` container answers; used by the app to enable or disable the features below |
 | `POST /edit` | Writes edited names into the files and the Beets library, and waits for the result |
+| `POST /cover` | Writes an album's cover image as `cover.jpg` into the folders of its songs (what Navidrome looks for first) and records it in the Beets library |
 | `POST /jobs` | Starts an `import` or an `enrich` and returns at once; progress and result are posted back to the Worker (`/api/beets/agent/progress` and `/report`) under the run id |
 
 There is **no fallback**: if the server cannot be reached, the app disables Organize, enrich and name editing and shows the reason (checked on load, every minute and when the window gets focus). One job runs at a time; edits wait up to 10 seconds for the library lock and are otherwise refused. A run that never reports back (server died) is marked failed after 2 hours (4 for enrich). The `/api/beets/agent/*` endpoints on the Worker skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
@@ -170,6 +171,10 @@ Each edit is sent to the home server API first, which writes the tags into the f
 - Songs uploaded to the app (not on the NAS) have no file on the server, so only the app's copy changes.
 - Tags are written as the Beets config says (`id3v23` for ID3v2.3 with UTF-16, as the Mp3tag note above requires). Log: `/mnt/user/appdata/beets/tag-edits.log`.
 - The phone gets the new names on its next sync.
+
+### Album covers
+
+An album page has **🖼 Add cover** (or **Replace cover** when it has one). The browser scales the picked image to at most 1000 px and sends it as JPEG; the Worker has the home server write it as `cover.jpg` into the folder(s) of the album's songs (an existing `cover.*`, `folder.*` or `front.*` image is kept as `old-<name>`), stores a copy in R2 so the cover shows at once, and starts a Navidrome scan. The next "Sync music from NAS" replaces the R2 copy with Navidrome's own. A folder that also holds songs of other albums is left alone, because a folder cover would apply to all of them. Art embedded in the songs is not changed. Like name edits, this is refused with the reason when the home server cannot be reached (albums made only of app uploads do not need it). The `mymusic-api` log is `/mnt/user/appdata/beets/tag-edits.log`.
 
 ## Ratings and AI suggestions
 

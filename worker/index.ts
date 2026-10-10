@@ -4,7 +4,7 @@ import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, r
 import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, failRun, finishRun, listRuns, startEnrich, updateProgress } from "./beets";
-import { HomeError, homeConfigured, homeEdit, homeStartJob, homeStatus, type TagOp } from "./home";
+import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, type TagOp } from "./home";
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { suggest, SuggestError } from "./suggest";
@@ -197,6 +197,50 @@ app.post("/api/library/rename", async (c) => {
     if (e instanceof HomeError) return c.json({ error: e.message }, 502);
     throw e;
   }
+});
+
+/**
+ * Sets the cover of an album from an uploaded JPEG (the web app scales it down first). The image goes into the album's
+ * folders on the home server as cover.jpg and into R2, so it shows at once; Navidrome picks the file up on the next
+ * scan and the next NAS sync replaces the R2 copy with Navidrome's.
+ */
+app.post("/api/library/cover", async (c) => {
+  const b = await c.req.json<{ album?: unknown; image?: unknown }>().catch(() => null);
+  const album = cleanName(b?.album);
+  const image = typeof b?.image === "string" ? b.image : "";
+  if (!b || !album || !image) return c.json({ error: "bad request" }, 400);
+  if (image.length > 5_500_000) return c.json({ error: "The image is too large." }, 413);
+  if (!image.startsWith("/9j/")) return c.json({ error: "The image must be a JPEG." }, 415);
+  const fam = c.get("family").familyId;
+  const bytes = Uint8Array.from(atob(image), (ch) => ch.charCodeAt(0));
+  const rows = await c.env.DB.prepare("SELECT source, COUNT(*) AS n FROM tracks WHERE family_id = ? AND album = ? AND deleted = 0 GROUP BY source")
+    .bind(fam, album).all<{ source: string; n: number }>();
+  const total = rows.results.reduce((s, r) => s + r.n, 0);
+  if (total === 0) return c.json({ error: "album not found" }, 404);
+  let files: Awaited<ReturnType<typeof homeCover>> | null = null;
+  if (rows.results.some((r) => r.source === "nas")) {
+    try {
+      files = await homeCover(c.env, album, image);
+    } catch (e) {
+      if (e instanceof HomeError) return c.json({ error: e.message }, 502);
+      throw e;
+    }
+    if (files.written === 0) {
+      return c.json({
+        error: files.skipped.length
+          ? "The songs of this album share a folder with other albums, so a folder cover would apply to all of them."
+          : "None of this album's files were found on the server.",
+      }, 409);
+    }
+  }
+  const digest = await crypto.subtle.digest("SHA-1", bytes);
+  const key = `families/${fam}/art/cover-${[...new Uint8Array(digest)].map((x) => x.toString(16).padStart(2, "0")).join("")}`;
+  await c.env.MUSIC.put(key, bytes, { httpMetadata: { contentType: "image/jpeg" } });
+  await c.env.DB.prepare("UPDATE tracks SET art_key = ?, art_tried = 1, updated_at = ? WHERE family_id = ? AND album = ? AND deleted = 0")
+    .bind(key, Date.now(), fam, album).run();
+  if (files && nasEnabled(c.env)) c.executionCtx.waitUntil(startScan(c.env).catch(() => undefined));
+  const warning = files?.skipped.length ? `${files.skipped.length} folder${files.skipped.length === 1 ? " is" : "s are"} shared with other albums and did not get the cover file.` : "";
+  return c.json({ ok: true, filesUpdated: !!files, warning });
 });
 
 /** After tags were written on the server: let Navidrome re-read them and tell the user about songs that were not found. */

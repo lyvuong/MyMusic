@@ -70,6 +70,7 @@ export const api = {
   editTrack: (id: string, e: { title?: string; artist?: string; album?: string; trackNo?: number }) => call<{ ok: boolean; filesUpdated: boolean; warning: string }>("PATCH", `/api/tracks/${id}`, e),
   /** Renames an artist or album on all its songs; an existing name merges the two. */
   renameGroup: (kind: "artist" | "album", from: string, to: string) => call<{ updated: number; filesUpdated: boolean; warning: string }>("POST", "/api/library/rename", { kind, from, to }),
+  setAlbumCover: (album: string, image: string) => call<{ ok: boolean; filesUpdated: boolean; warning: string }>("POST", "/api/library/cover", { album, image }),
   deleteTrack: (id: string) => call<void>("DELETE", `/api/tracks/${id}`),
 
   /** URL for <audio>/<img>, which cannot send an Authorization header. */

@@ -74,6 +74,11 @@ export function homeEdit(env: Env, ops: TagOp[]): Promise<EditResult> {
   return call<EditResult>(env, "POST", "/edit", { ops }, 95000);
 }
 
+/** Writes a JPEG cover (base64) into the folders of an album. Throws a HomeError when it could not be written. */
+export function homeCover(env: Env, album: string, image: string): Promise<EditResult> {
+  return call<EditResult>(env, "POST", "/cover", { album, image }, 95000);
+}
+
 /** Starts a long job (an import or an enrich); the server reports progress and the result to the Worker by run id. */
 export async function homeStartJob(env: Env, id: string, kind: "import" | "enrich"): Promise<void> {
   await call<{ id: string }>(env, "POST", "/jobs", { id, kind }, 15000);

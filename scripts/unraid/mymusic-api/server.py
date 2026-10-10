@@ -6,6 +6,7 @@ in the X-Agent-Key header. Endpoints (fixed; no paths or commands ever come from
 
   GET  /health   -> {"ok": true, "busy": null | "import" | "enrich"}   checks that the beets container answers
   POST /edit     {"ops": [...]}  writes edited names into the files and the Beets library, waits for the result
+  POST /cover    {"album": "...", "image": "<base64 jpeg>"}  writes cover.jpg into the folders of that album
   POST /jobs     {"id": "...", "kind": "import" | "enrich"}  starts a long job and returns at once (202); progress and the
                  result are posted to the Worker (/api/beets/agent/progress and /report) under that run id
 
@@ -39,9 +40,8 @@ APPDATA = os.environ.get("BEETS_APPDATA", "/beets-appdata")
 PORT = int(os.environ.get("PORT", "8099"))
 EDIT_TIMEOUT = 85  # seconds; the Worker gives up at 95 and a Cloudflare Tunnel request at 100
 
-# Runs inside the beets container with Beets' own Python: writes tags into the files and updates the Beets library.
-# Files are NOT moved (a new path would give Navidrome a new song id and break playlists and ratings).
-EDIT_PY = r'''
+# Both scripts below run inside the beets container with Beets' own Python and share these helpers.
+COMMON_PY = r'''
 import json, os, sys, unicodedata
 from beets import config, ui
 
@@ -70,6 +70,11 @@ def resolve(path):
 
 config.read(user=True, defaults=True)
 lib = ui._open_library(config)
+'''
+
+# Writes edited names into the files and the Beets library.
+# Files are NOT moved (a new path would give Navidrome a new song id and break playlists and ratings).
+EDIT_PY = COMMON_PY + r'''
 ops = json.load(sys.stdin)
 items = list(lib.items())
 changed = {}
@@ -142,6 +147,60 @@ for album_id, fields in album_fields.items():
             alb[k] = v
         alb.store()
 print("RESULT " + json.dumps({"written": len(changed) - failed - len(missing), "failed": failed, "skipped": skipped, "missing": missing}))
+sys.exit(1 if failed else 0)
+'''
+
+# Puts an image into each folder that holds the songs of an album, as cover.jpg (the name Navidrome looks for first).
+# A folder shared with songs of other albums is left alone: its cover would apply to all of them.
+COVER_PY = COMMON_PY + r'''
+import base64
+req = json.load(sys.stdin)
+album = nfc(req["album"])
+data = base64.b64decode(req["image"])
+IMAGES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+NAMES = ("cover", "folder", "front")
+folders = {}   # folder -> {"albums": set of album names, "ids": set of beets album ids of this album}
+missing = []
+for it in lib.items():
+    real = resolve(it.path)
+    if real is None:
+        if nfc(it.album) == album:
+            missing.append(os.fsdecode(it.path))
+        continue
+    f = folders.setdefault(os.path.dirname(os.fsdecode(real)), {"albums": set(), "ids": set()})
+    f["albums"].add(nfc(it.album))
+    if nfc(it.album) == album and it.album_id is not None:
+        f["ids"].add(it.album_id)
+skipped, written, failed = [], 0, 0
+for folder, f in folders.items():
+    if album not in f["albums"]:
+        continue
+    if len(f["albums"]) > 1:
+        skipped.append(os.path.basename(folder))
+        print("folder %s is shared with other albums, left alone" % folder)
+        continue
+    try:
+        for name in os.listdir(folder):
+            stem, ext = os.path.splitext(name)
+            if stem.lower() in NAMES and ext.lower() in IMAGES:
+                # kept, but under a name Navidrome does not treat as a cover
+                os.replace(os.path.join(folder, name), os.path.join(folder, "old-" + name))
+        dest = os.path.join(folder, "cover.jpg")
+        tmp = dest + ".tmp"
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, dest)
+        for aid in f["ids"]:
+            alb = lib.get_album(aid)
+            if alb is not None:
+                alb.artpath = os.fsencode(dest)
+                alb.store()
+        written += 1
+        print("cover written: %s" % dest)
+    except Exception as e:
+        failed += 1
+        print("could not write the cover in %s: %s" % (folder, e))
+print("RESULT " + json.dumps({"written": written, "failed": failed, "skipped": skipped, "missing": missing}))
 sys.exit(1 if failed else 0)
 '''
 
@@ -317,21 +376,22 @@ def start_job(kind, run_id):
 
 # ---- Edits ----------------------------------------------------------------------------------------------------------
 
-def do_edit(ops):
-    """Returns (status, body)."""
+def do_edit(payload, script=None, what="edit"):
+    """Runs an edit script in the beets container with the payload as JSON on stdin. Returns (status, body)."""
+    script = script or EDIT_PY
     try:
         with beets_lock(10):
             try:
                 p = subprocess.run(
-                    DOCKER + ["exec", "-i", BEETS, "sh", "-c", LAUNCH, EDIT_PY],
-                    input=json.dumps(ops), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=EDIT_TIMEOUT,
+                    DOCKER + ["exec", "-i", BEETS, "sh", "-c", LAUNCH, script],
+                    input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=EDIT_TIMEOUT,
                 )
             except subprocess.TimeoutExpired:
-                return 504, {"error": "Writing the tags took too long and was stopped. Some files may have changed; try again."}
+                return 504, {"error": "The %s took too long and was stopped. Some files may have changed; try again." % what}
             except OSError as e:
                 return 503, {"error": "Cannot run docker: %s" % e}
     except TimeoutError as e:
-        return 503, {"error": "Cannot edit right now: %s. Try again when it finishes." % e}
+        return 503, {"error": "Cannot %s right now: %s. Try again when it finishes." % (what, e)}
     text = p.stdout + p.stderr
     append_file(os.path.join(APPDATA, "tag-edits.log"), "=== %s ===\n%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
     result = None
@@ -342,9 +402,9 @@ def do_edit(ops):
             except ValueError:
                 pass
     if result is None:
-        return 500, {"error": "Writing the tags failed: " + (text.strip().splitlines() or ["no output"])[-1][:300]}
+        return 500, {"error": "The %s failed: " % what + (text.strip().splitlines() or ["no output"])[-1][:300]}
     if p.returncode != 0 or result.get("failed"):
-        return 500, {"error": "Could not write %d file(s): %s" % (result.get("failed", 0), text.strip()[-400:])}
+        return 500, {"error": "Could not write %d %s: %s" % (result.get("failed", 0), "folder" if script is COVER_PY else "file(s)", text.strip()[-400:])}
     return 200, {"written": result.get("written", 0), "skipped": result.get("skipped", []), "missing": result.get("missing", []), "log": text[-2000:]}
 
 
@@ -383,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def body(self):
         n = int(self.headers.get("Content-Length") or 0)
-        if n > 2_000_000:
+        if n > 6_000_000:  # a cover image, base64 encoded
             return None
         try:
             return json.loads(self.rfile.read(n) or b"{}")
@@ -419,6 +479,11 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(ops, list) or not ops or len(ops) > 500 or not all(isinstance(o, dict) for o in ops):
                 return self.send(400, {"error": "ops must be a list of 1-500 edits"})
             return self.send(*do_edit(ops))
+        if self.path == "/cover":
+            album, image = b.get("album"), b.get("image")
+            if not isinstance(album, str) or not album.strip() or not isinstance(image, str) or not image:
+                return self.send(400, {"error": "album and image (base64) are required"})
+            return self.send(*do_edit({"album": album, "image": image}, COVER_PY, "cover update"))
         if self.path == "/jobs":
             kind, run_id = b.get("kind"), b.get("id")
             if kind not in JOBS or not isinstance(run_id, str) or not run_id:

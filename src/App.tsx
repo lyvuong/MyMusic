@@ -4,6 +4,7 @@ import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, Track } 
 import { api } from "./api";
 import { ArtistPic, Cover } from "./art";
 import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } from "./browse";
+import { CoverPick } from "./CoverPick";
 import { EditDialog } from "./EditDialog";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
@@ -380,7 +381,22 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
       <>
         {detailAlbum ? (
           <Hero cover={<Cover track={detailAlbum.art} seed={detailAlbum.name} className="lg" />} title={detailAlbum.name} subtitle={detailAlbum.artist} tracks={list} onBack={back}
-            actions={<button disabled={!canEdit} title={editOff} onClick={() => setEditing({ kind: "album", name: detailAlbum.name })}>✎ Rename / merge</button>} />
+            actions={
+              <>
+                <button disabled={!canEdit} title={editOff} onClick={() => setEditing({ kind: "album", name: detailAlbum.name })}>✎ Rename / merge</button>
+                <CoverPick
+                  label={detailAlbum.art ? "🖼 Replace cover" : "🖼 Add cover"}
+                  // An album that has only app uploads needs no home server; the server says so if it is needed.
+                  disabled={!canEdit && detailAlbum.tracks.some((t) => t.source === "nas")}
+                  title={editOff}
+                  onPick={async (image) => {
+                    const r = await api.setAlbumCover(detailAlbum.name, image);
+                    await refresh();
+                    flash(`Cover saved.${r.warning ? ` ${r.warning}` : ""}`);
+                  }}
+                />
+              </>
+            } />
         ) : (
           <Hero cover={<ArtistPic name={detailArtist!.name} className="lg" />} title={detailArtist!.name} subtitle="Artist" tracks={list} onBack={back}
             actions={<button disabled={!canEdit} title={editOff} onClick={() => setEditing({ kind: "artist", name: detailArtist!.name })}>✎ Rename / merge</button>} />
