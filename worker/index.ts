@@ -225,12 +225,8 @@ app.post("/api/library/cover", async (c) => {
       if (e instanceof HomeError) return c.json({ error: e.message }, 502);
       throw e;
     }
-    if (files.written === 0) {
-      return c.json({
-        error: files.skipped.length
-          ? "The songs of this album share a folder with other albums, so a folder cover would apply to all of them."
-          : "None of this album's files were found on the server.",
-      }, 409);
+    if (files.written === 0 && !files.embedded) {
+      return c.json({ error: "None of this album's files were found on the server." }, 409);
     }
   }
   const digest = await crypto.subtle.digest("SHA-1", bytes);
@@ -239,7 +235,10 @@ app.post("/api/library/cover", async (c) => {
   await c.env.DB.prepare("UPDATE tracks SET art_key = ?, art_tried = 1, updated_at = ? WHERE family_id = ? AND album = ? AND deleted = 0")
     .bind(key, Date.now(), fam, album).run();
   if (files && nasEnabled(c.env)) c.executionCtx.waitUntil(startScan(c.env).catch(() => undefined));
-  const warning = files?.skipped.length ? `${files.skipped.length} folder${files.skipped.length === 1 ? " is" : "s are"} shared with other albums and did not get the cover file.` : "";
+  const notes: string[] = [];
+  if (files?.embedded) notes.push(`Some songs share a folder with other albums, so the cover was embedded in ${files.embedded} file${files.embedded === 1 ? "" : "s"} instead of saved as a folder image.`);
+  if (files?.shadowed?.length) notes.push("Navidrome may keep showing the folder's own cover image for those songs until it is removed.");
+  const warning = notes.join(" ");
   return c.json({ ok: true, filesUpdated: !!files, warning });
 });
 

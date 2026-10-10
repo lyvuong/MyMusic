@@ -66,6 +66,10 @@ export interface EditResult {
   skipped: string[];
   /** Songs listed in the Beets library whose file is gone from the disk (the library entry was still updated). */
   missing: string[];
+  /** Cover updates: song files that got the image embedded (folders shared with other albums), and the folders where
+   *  an existing folder image will still be shown first. */
+  embedded?: number;
+  shadowed?: string[];
   log: string;
 }
 

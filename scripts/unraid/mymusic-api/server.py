@@ -6,7 +6,7 @@ in the X-Agent-Key header. Endpoints (fixed; no paths or commands ever come from
 
   GET  /health   -> {"ok": true, "busy": null | "import" | "enrich"}   checks that the beets container answers
   POST /edit     {"ops": [...]}  writes edited names into the files and the Beets library, waits for the result
-  POST /cover    {"album": "...", "image": "<base64 jpeg>"}  writes cover.jpg into the folders of that album
+  POST /cover    {"album": "...", "image": "<base64 jpeg>"}  writes cover.jpg into the folders of that album (embeds it when a folder is shared)
   POST /jobs     {"id": "...", "kind": "import" | "enrich"}  starts a long job and returns at once (202); progress and the
                  result are posted to the Worker (/api/beets/agent/progress and /report) under that run id
 
@@ -151,15 +151,20 @@ sys.exit(1 if failed else 0)
 '''
 
 # Puts an image into each folder that holds the songs of an album, as cover.jpg (the name Navidrome looks for first).
-# A folder shared with songs of other albums is left alone: its cover would apply to all of them.
+# A folder shared with songs of other albums gets no folder image (it would apply to all of them): the image is embedded
+# in the album's own song files instead.
 COVER_PY = COMMON_PY + r'''
 import base64
+try:
+    from mediafile import MediaFile, Image, ImageType
+except ImportError:  # older Beets
+    from beets.mediafile import MediaFile, Image, ImageType
 req = json.load(sys.stdin)
 album = nfc(req["album"])
 data = base64.b64decode(req["image"])
 IMAGES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 NAMES = ("cover", "folder", "front")
-folders = {}   # folder -> {"albums": set of album names, "ids": set of beets album ids of this album}
+folders = {}   # folder -> {"albums": set of album names, "ids": set of beets album ids of this album, "files": [paths]}
 missing = []
 for it in lib.items():
     real = resolve(it.path)
@@ -167,17 +172,34 @@ for it in lib.items():
         if nfc(it.album) == album:
             missing.append(os.fsdecode(it.path))
         continue
-    f = folders.setdefault(os.path.dirname(os.fsdecode(real)), {"albums": set(), "ids": set()})
+    f = folders.setdefault(os.path.dirname(os.fsdecode(real)), {"albums": set(), "ids": set(), "files": []})
     f["albums"].add(nfc(it.album))
-    if nfc(it.album) == album and it.album_id is not None:
-        f["ids"].add(it.album_id)
-skipped, written, failed = [], 0, 0
+    if nfc(it.album) == album:
+        f["files"].append(real)
+        if it.album_id is not None:
+            f["ids"].add(it.album_id)
+skipped, shadowed, written, embedded, failed = [], [], 0, 0, 0
 for folder, f in folders.items():
     if album not in f["albums"]:
         continue
     if len(f["albums"]) > 1:
-        skipped.append(os.path.basename(folder))
-        print("folder %s is shared with other albums, left alone" % folder)
+        # No folder image here; Navidrome only shows embedded art when the folder has no cover.*, folder.* or front.* image.
+        try:
+            for real in f["files"]:
+                mf = MediaFile(real)
+                mf.images = [Image(data=data, desc="", type=ImageType.front)]
+                try:
+                    mf.save(id3v23=bool(config["id3v23"].get()))
+                except TypeError:
+                    mf.save()
+                embedded += 1
+            if any(os.path.splitext(n)[0].lower() in NAMES and os.path.splitext(n)[1].lower() in IMAGES for n in os.listdir(folder)):
+                shadowed.append(os.path.basename(folder))
+            print("folder %s is shared with other albums: embedded the cover in %d file(s)" % (folder, len(f["files"])))
+        except Exception as e:
+            failed += 1
+            skipped.append(os.path.basename(folder))
+            print("could not embed the cover in %s: %s" % (folder, e))
         continue
     try:
         for name in os.listdir(folder):
@@ -200,7 +222,7 @@ for folder, f in folders.items():
     except Exception as e:
         failed += 1
         print("could not write the cover in %s: %s" % (folder, e))
-print("RESULT " + json.dumps({"written": written, "failed": failed, "skipped": skipped, "missing": missing}))
+print("RESULT " + json.dumps({"written": written, "embedded": embedded, "shadowed": shadowed, "failed": failed, "skipped": skipped, "missing": missing}))
 sys.exit(1 if failed else 0)
 '''
 
@@ -404,8 +426,8 @@ def do_edit(payload, script=None, what="edit"):
     if result is None:
         return 500, {"error": "The %s failed: " % what + (text.strip().splitlines() or ["no output"])[-1][:300]}
     if p.returncode != 0 or result.get("failed"):
-        return 500, {"error": "Could not write %d %s: %s" % (result.get("failed", 0), "folder" if script is COVER_PY else "file(s)", text.strip()[-400:])}
-    return 200, {"written": result.get("written", 0), "skipped": result.get("skipped", []), "missing": result.get("missing", []), "log": text[-2000:]}
+        return 500, {"error": "Could not write %d %s: %s" % (result.get("failed", 0), "folder(s)" if script is COVER_PY else "file(s)", text.strip()[-400:])}
+    return 200, {"written": result.get("written", 0), "embedded": result.get("embedded", 0), "shadowed": result.get("shadowed", []), "skipped": result.get("skipped", []), "missing": result.get("missing", []), "log": text[-2000:]}
 
 
 def health():
