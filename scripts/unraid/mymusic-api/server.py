@@ -186,12 +186,12 @@ for folder, f in folders.items():
         # No folder image here; Navidrome only shows embedded art when the folder has no cover.*, folder.* or front.* image.
         try:
             for real in f["files"]:
-                mf = MediaFile(real)
-                mf.images = [Image(data=data, desc="", type=ImageType.front)]
                 try:
-                    mf.save(id3v23=bool(config["id3v23"].get()))
+                    mf = MediaFile(real, id3v23=bool(config["id3v23"].get()))  # as Beets itself opens files for writing
                 except TypeError:
-                    mf.save()
+                    mf = MediaFile(real)
+                mf.images = [Image(data=data, desc="", type=ImageType.front)]
+                mf.save()
                 embedded += 1
             if any(os.path.splitext(n)[0].lower() in NAMES and os.path.splitext(n)[1].lower() in IMAGES for n in os.listdir(folder)):
                 shadowed.append(os.path.basename(folder))
