@@ -2,6 +2,13 @@
 	"name": "mymusic",
 	"main": "worker/index.ts",
 	"compatibility_date": "2026-09-20",
+	// Custom domain (the workers.dev URL stays enabled for installed apps that still use it)
+	"routes": [
+		{
+			"pattern": "mymusic.lv5.uk",
+			"custom_domain": true
+		}
+	],
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
