@@ -3,7 +3,8 @@
 #
 # Second half of the two-run setup: the web app's Organize button (scripts/unraid/mymusic-api) imports with only the
 # `musicbrainz scrub` plugins so it finishes fast. This job adds what that run skipped, for albums already in the
-# library: cover art, art embedded in the files, and genres. It uses the full plugin list from config.yaml.
+# library: Vietnamese tag fixes (decoding and capitalising words, scripts/unraid/fix-vietnamese.py), cover art, art
+# embedded in the files, and genres. It uses the full plugin list from config.yaml.
 # Each step only touches albums that still lack the data, so a night with nothing new ends in seconds.
 #
 # Each night is also reported to the MyMusic Worker, so the Family tab shows it under "Beets history". It uses the
@@ -12,6 +13,7 @@
 LOG="/mnt/user/appdata/beets/enrich.log"
 API="https://mymusic.lyvuong.workers.dev"
 KEY_FILE="/boot/config/mymusic-agent.key"
+FIXVN="/mnt/user/appdata/beets/fix-vietnamese.py"   # copy of scripts/unraid/fix-vietnamese.py
 KEY=$(tr -d '[:space:]' < "$KEY_FILE" 2>/dev/null)
 
 # Tell the web app this night has begun (it may still wait for the import lock below).
@@ -45,6 +47,11 @@ fi
 E=0
 {
   echo "=== $(date '+%Y-%m-%d %H:%M:%S') enrich start ==="
+  if [ -f "$FIXVN" ]; then
+    docker exec -i beets /lsiopy/bin/python3 - --apply < "$FIXVN" || E=$?   # decodes ASCII-typed Vietnamese, capitalises words
+  else
+    echo "fix-vietnamese.py not found at $FIXVN: skipping the Vietnamese tag fix"
+  fi
   docker exec beets beet fetchart || E=$?                      # skips albums that already have art
   docker exec beets beet embedart -y 'added:-14d..' || E=$?    # writes the cover into files; recent albums only (rewrites files)
   docker exec beets beet lastgenre || E=$?                     # skips albums that already have a genre

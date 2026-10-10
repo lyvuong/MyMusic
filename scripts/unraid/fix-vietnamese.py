@@ -11,6 +11,8 @@ Decodes   o* o+ -> ơ   u* u+ -> ư   a( -> ă   a^ e^ o^ -> â ê ô   dd d- ->
 and the tones   `  ->  grave   '  ->  acute   ?  ->  hook   ~  ->  tilde   .  ->  dot below
 so  "Hu+o+*ng Ca^`n"  becomes  "Hương Cần".  "_20" (an encoded space) becomes a space everywhere.
 
+The first letter of every word in a Vietnamese field (decoded here or already real Vietnamese) is capitalised: "hương cần" -> "Hương Cần".
+
 A field is only decoded when it clearly contains Vietnamese markers (a^ o* u+ a` or a word starting dd/d-), so English
 titles are left alone. File names cannot hold ' ( ? so those marks were replaced by "_" and are lost: such fields are
 decoded as far as possible and listed in /config/vietnamese-review.txt to be finished by hand (Mp3tag).
@@ -37,6 +39,7 @@ STRONG = re.compile(
     r"[aAeEoO]\^|[oOuU][+*]|[aeiouyAEIOUY]`|(?<![A-Za-z])[dD][dD-](?=[aeiouyAEIOUY])"
     r"|(?<=[A-Za-z])[aeiouyAEIOUY][.~][a-z]+(?!\.)"  # "Tri.nh", "Ba.n": a lone tone mark inside a lowercase word
 )
+VIETNAMESE = re.compile("[đĐ̛̣̀́̂̃̆̉]")  # in NFD: d-stroke, tones, breve, circumflex, horn
 APOSTROPHE = re.compile(r"(?<=[A-Za-z])_(?=(?:s|t|m|d|re|ve|ll)\b)")
 
 
@@ -53,15 +56,24 @@ def _accent(m):
     return unicodedata.normalize("NFC", out) + tail
 
 
+WORD_START = re.compile(r"(^|[\s(\[\"])(\w)")
+
+
+def _capitalise(s):
+    return WORD_START.sub(lambda m: m.group(1) + m.group(2).upper(), s)
+
+
 def decode(text, apostrophes=False):
     """Returns (decoded text, True when it is Vietnamese that still has a lost mark ("_"))."""
     s = HEX_RE.sub(lambda m: HEX.get(m.group(1), m.group(0)), text)
     if STRONG.search(s):
         s = D_MARK.sub(lambda m: "Đ" if m.group(1) == "D" else "đ", s)
         s = SYLLABLE.sub(_accent, s)
-        return s, "_" in s
+        return _capitalise(s), "_" in s
     if apostrophes:
         s = APOSTROPHE.sub("'", s)
+    if VIETNAMESE.search(unicodedata.normalize("NFD", s)):
+        s = _capitalise(s)
     return s, False
 
 
