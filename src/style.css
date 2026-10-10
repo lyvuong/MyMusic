@@ -66,6 +66,8 @@ ul { list-style: none; margin: 8px 0; padding: 0; }
 .cover.round.lg { border-radius: 50%; }
 
 /* Album and artist grids */
+/* The album and artist lists use the whole window (up to 1800px) instead of the 1000px column, so more tiles fit per row. */
+.wide { position: relative; left: 50%; width: min(1800px, calc(100vw - 32px)); margin-left: calc(min(1800px, 100vw - 32px) / -2); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 18px 14px; margin: 8px 0; }
 .strip { display: grid; grid-auto-flow: column; grid-auto-columns: 140px; gap: 14px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
 .strip .tile { scroll-snap-align: start; }

@@ -430,7 +430,7 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
 
   const views: [View, string][] = [["albums", "Albums"], ["artists", "Artists"], ["songs", "Songs"]];
   return (
-    <>
+    <div className={view === "songs" ? undefined : "wide"}>
       {dialog}
       {toastEl}
       <div className="search-box">
@@ -487,7 +487,7 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
           </ul>
         </>
       )}
-    </>
+    </div>
   );
 }
 
