@@ -200,12 +200,18 @@ app.post("/api/library/rename", async (c) => {
 });
 
 /** After tags were written on the server: let Navidrome re-read them and tell the user about songs that were not found. */
-async function afterFileEdit(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, files: { written: number; skipped: string[] } | null) {
+async function afterFileEdit(env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, files: { written: number; skipped: string[]; missing?: string[] } | null) {
   if (!files) return { ok: true, filesUpdated: false, warning: "" };
   if (nasEnabled(env)) ctx.waitUntil(startScan(env).catch(() => undefined));
-  const warning = files.skipped.length
-    ? `${files.skipped.length} song${files.skipped.length === 1 ? " was" : "s were"} not found in the file library, so only the app changed for ${files.skipped.length === 1 ? "it" : "them"}.`
-    : "";
+  const notes: string[] = [];
+  if (files.skipped.length) {
+    notes.push(`${files.skipped.length} song${files.skipped.length === 1 ? " was" : "s were"} not found in the file library, so only the app changed for ${files.skipped.length === 1 ? "it" : "them"}.`);
+  }
+  const gone = files.missing?.length ?? 0;
+  if (gone) {
+    notes.push(`${gone} file${gone === 1 ? " is" : "s are"} missing on the server disk (run "beet update" there to clean the library), so only the library entry changed.`);
+  }
+  const warning = notes.join(" ");
   return { ok: true, filesUpdated: files.written > 0, warning };
 }
 

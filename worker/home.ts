@@ -64,6 +64,8 @@ export async function homeStatus(env: Env): Promise<ServerStatus> {
 export interface EditResult {
   written: number;
   skipped: string[];
+  /** Songs listed in the Beets library whose file is gone from the disk (the library entry was still updated). */
+  missing: string[];
   log: string;
 }
 

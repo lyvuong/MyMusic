@@ -42,7 +42,7 @@ EDIT_TIMEOUT = 85  # seconds; the Worker gives up at 95 and a Cloudflare Tunnel 
 # Runs inside the beets container with Beets' own Python: writes tags into the files and updates the Beets library.
 # Files are NOT moved (a new path would give Navidrome a new song id and break playlists and ratings).
 EDIT_PY = r'''
-import json, sys, unicodedata
+import json, os, sys, unicodedata
 from beets import config, ui
 
 def nfc(s):
@@ -55,6 +55,7 @@ items = list(lib.items())
 changed = {}
 album_fields = {}   # album id -> {field: value} for album and artist renames
 skipped = []
+missing = []   # in the Beets library but gone from the disk: the library entry is updated, no file is written
 failed = 0
 
 for op in ops:
@@ -101,7 +102,11 @@ for op in ops:
 
 for it in changed.values():
     try:
-        it.write()
+        if os.path.exists(it.path):
+            it.write()
+        else:
+            missing.append(os.fsdecode(it.path))
+            print("file is missing on disk, only the library entry was updated: %s" % os.fsdecode(it.path))
         it.store()
     except Exception as e:
         failed += 1
@@ -112,7 +117,7 @@ for album_id, fields in album_fields.items():
         for k, v in fields.items():
             alb[k] = v
         alb.store()
-print("RESULT " + json.dumps({"written": len(changed) - failed, "failed": failed, "skipped": skipped}))
+print("RESULT " + json.dumps({"written": len(changed) - failed - len(missing), "failed": failed, "skipped": skipped, "missing": missing}))
 sys.exit(1 if failed else 0)
 '''
 
@@ -316,7 +321,7 @@ def do_edit(ops):
         return 500, {"error": "Writing the tags failed: " + (text.strip().splitlines() or ["no output"])[-1][:300]}
     if p.returncode != 0 or result.get("failed"):
         return 500, {"error": "Could not write %d file(s): %s" % (result.get("failed", 0), text.strip()[-400:])}
-    return 200, {"written": result.get("written", 0), "skipped": result.get("skipped", []), "log": text[-2000:]}
+    return 200, {"written": result.get("written", 0), "skipped": result.get("skipped", []), "missing": result.get("missing", []), "log": text[-2000:]}
 
 
 def health():
