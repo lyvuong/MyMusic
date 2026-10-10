@@ -48,6 +48,16 @@ from beets import config, ui
 def nfc(s):
     return unicodedata.normalize("NFC", s or "").strip()
 
+# Navidrome lists a song with no album or artist under these placeholders; Beets holds it as an empty string.
+PLACEHOLDERS = ("[unknown album]", "[unknown artist]")
+
+def same(a, b):
+    """True when two names are the same after Unicode normalisation, an empty name matching Navidrome's placeholder."""
+    a, b = nfc(a), nfc(b)
+    a = "" if a.lower() in PLACEHOLDERS else a
+    b = "" if b.lower() in PLACEHOLDERS else b
+    return a == b
+
 def resolve(path):
     """The file's real path when only the Unicode form of a name differs (NFC vs NFD), else None."""
     p = os.fsdecode(path)
@@ -86,21 +96,21 @@ failed = 0
 for op in ops:
     kind, n = op.get("kind"), 0
     if kind == "album":
-        old, new = nfc(op["from"]), op["to"]
+        old, new = op["from"], op["to"]
         for it in items:
-            if nfc(it.album) == old:
+            if same(it.album, old):
                 it.album = new
                 changed[it.id] = it
                 if it.album_id:
                     album_fields.setdefault(it.album_id, {})["album"] = new
                 n += 1
     elif kind == "artist":
-        old, new = nfc(op["from"]), op["to"]
+        old, new = op["from"], op["to"]
         for it in items:
             hit = False
-            if nfc(it.artist) == old:
+            if same(it.artist, old):
                 it.artist, hit = new, True
-            if nfc(it.albumartist) == old:
+            if same(it.albumartist, old):
                 it.albumartist, hit = new, True
                 if it.album_id:
                     album_fields.setdefault(it.album_id, {})["albumartist"] = new
@@ -110,7 +120,7 @@ for op in ops:
     elif kind == "song":
         m, s = op["match"], op["set"]
         found = [it for it in items
-                 if nfc(it.title) == nfc(m["title"]) and nfc(it.artist) == nfc(m["artist"]) and nfc(it.album) == nfc(m["album"])]
+                 if same(it.title, m["title"]) and same(it.artist, m["artist"]) and same(it.album, m["album"])]
         if len(found) > 1 and m.get("trackNo"):
             found = [it for it in found if it.track == m["trackNo"]] or found
         if len(found) == 1:
@@ -160,7 +170,7 @@ try:
 except ImportError:  # older Beets
     from beets.mediafile import MediaFile, Image, ImageType
 req = json.load(sys.stdin)
-album = nfc(req["album"])
+album = req["album"]
 data = base64.b64decode(req["image"])
 IMAGES = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 NAMES = ("cover", "folder", "front")
@@ -169,18 +179,18 @@ missing = []
 for it in lib.items():
     real = resolve(it.path)
     if real is None:
-        if nfc(it.album) == album:
+        if same(it.album, album):
             missing.append(os.fsdecode(it.path))
         continue
     f = folders.setdefault(os.path.dirname(os.fsdecode(real)), {"albums": set(), "ids": set(), "files": []})
-    f["albums"].add(nfc(it.album))
-    if nfc(it.album) == album:
+    f["albums"].add("" if same(it.album, "") else nfc(it.album))
+    if same(it.album, album):
         f["files"].append(real)
         if it.album_id is not None:
             f["ids"].add(it.album_id)
 skipped, shadowed, written, embedded, failed = [], [], 0, 0, 0
 for folder, f in folders.items():
-    if album not in f["albums"]:
+    if ("" if same(album, "") else nfc(album)) not in f["albums"]:
         continue
     if len(f["albums"]) > 1:
         # No folder image here; Navidrome only shows embedded art when the folder has no cover.*, folder.* or front.* image.
