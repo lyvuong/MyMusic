@@ -2,7 +2,9 @@
 	"name": "mymusic",
 	"main": "worker/index.ts",
 	"compatibility_date": "2026-09-20",
-	// Custom domain (the workers.dev URL stays enabled for installed apps that still use it)
+	// Custom domain. workers_dev must be explicit: with routes set, wrangler otherwise turns the workers.dev URL off,
+	// which the installed apps (older builds) and the home server API still use.
+	"workers_dev": true,
 	"routes": [
 		{
 			"pattern": "mymusic.lv5.uk",

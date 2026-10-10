@@ -35,7 +35,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 KEY = (os.environ.get("AGENT_KEY") or open(os.environ.get("KEY_FILE", "/run/mymusic-agent.key")).read()).strip()
-WORKER = os.environ.get("WORKER_URL", "https://mymusic.lyvuong.workers.dev").rstrip("/")
+WORKER = os.environ.get("WORKER_URL", "https://mymusic.lv5.uk").rstrip("/")
 BEETS = os.environ.get("BEETS_CONTAINER", "beets")
 YTDLP = os.environ.get("YTDLP_CONTAINER", "yt-dlp")  # has yt-dlp + ffmpeg; mounts the inbox read-write as /downloads
 YTDLP_ARGS = shlex.split(os.environ.get("YTDLP_ARGS", ""))  # extra yt-dlp options, e.g. "--js-runtimes node" if YouTube needs one
