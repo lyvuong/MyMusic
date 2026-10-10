@@ -48,6 +48,26 @@ from beets import config, ui
 def nfc(s):
     return unicodedata.normalize("NFC", s or "").strip()
 
+def resolve(path):
+    """The file's real path when only the Unicode form of a name differs (NFC vs NFD), else None."""
+    p = os.fsdecode(path)
+    if os.path.exists(p):
+        return path
+    cur = os.path.splitdrive(p)[0] + os.sep
+    for part in [x for x in os.path.splitdrive(p)[1].split(os.sep) if x]:
+        nxt = os.path.join(cur, part)
+        if not os.path.exists(nxt):
+            try:
+                names = os.listdir(cur)
+            except OSError:
+                return None
+            hit = [n for n in names if nfc(n) == nfc(part)]
+            if len(hit) != 1:
+                return None
+            nxt = os.path.join(cur, hit[0])
+        cur = nxt
+    return os.fsencode(cur) if os.path.exists(cur) else None
+
 config.read(user=True, defaults=True)
 lib = ui._open_library(config)
 ops = json.load(sys.stdin)
@@ -102,7 +122,11 @@ for op in ops:
 
 for it in changed.values():
     try:
-        if os.path.exists(it.path):
+        real = resolve(it.path)
+        if real is not None:
+            if real != it.path:
+                print("library path differs from the disk only in Unicode form, relinked: %s" % os.fsdecode(real))
+                it.path = real
             it.write()
         else:
             missing.append(os.fsdecode(it.path))
