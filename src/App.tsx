@@ -109,9 +109,21 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
     };
   }, [checkHome]);
   const tabs: [Tab, string][] = [["library", "Library"], ["foryou", "For you"], ["playlists", "Playlists"], ["family", "Family"]];
+  // The search box sticks right under the header, so it needs to know how tall the header is.
+  const shellRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const shell = shellRef.current, header = headerRef.current;
+    if (!shell || !header) return;
+    const set = () => shell.style.setProperty("--header-h", `${header.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(header);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div className="shell">
-      <header>
+    <div className="shell" ref={shellRef}>
+      <header ref={headerRef}>
         <h1><img className="logo" src="/icon-192.png" alt="" /> MyMusic <small>{family.name}</small></h1>
         <nav>
           {tabs.map(([k, label]) => (

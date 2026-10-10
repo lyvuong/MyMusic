@@ -44,7 +44,7 @@ header h1 { margin: 0 0 10px; font-size: 1.35rem; display: flex; align-items: ce
 header h1 small { font-weight: normal; }
 nav { display: flex; gap: 6px; flex-wrap: wrap; }
 nav button.active, .seg button.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
-.search-box { position: relative; margin: 10px 0 12px; }
+.search-box { position: sticky; top: var(--header-h, 0px); z-index: 1; background: var(--bg); padding: 10px 0 12px; }
 .search { width: 100%; padding-right: 42px; }
 .search-box .clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; padding: 0; border: none; border-radius: 50%; background: transparent; color: var(--muted); line-height: 1; }
 .search-box .clear:hover { background: var(--hover); color: inherit; }
