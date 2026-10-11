@@ -3,7 +3,7 @@ import type { BeetsRun } from "../shared/types";
 /**
  * Beets runs on the home server. The web app asks the Worker; the Worker records a run here and tells the home
  * server API (worker/home.ts) to start it. The server then reports progress and the result back to the Worker
- * (the /api/beets/agent/* endpoints) so the Family tab can show them.
+ * (the /api/beets/agent/* endpoints) so the Library tools tab can show them.
  */
 
 const LOG_MAX = 6000;

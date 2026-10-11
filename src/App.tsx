@@ -13,7 +13,7 @@ import { PlayerBar, PlayerProvider, usePlayer } from "./player";
 import { RatingsProvider, Stars } from "./ratings";
 import { useLibrary } from "./useLibrary";
 
-type Tab = "library" | "foryou" | "playlists" | "family";
+type Tab = "library" | "foryou" | "playlists" | "tools" | "family";
 
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = still loading
@@ -110,7 +110,12 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
       window.removeEventListener("focus", checkHome);
     };
   }, [checkHome]);
-  const tabs: [Tab, string][] = [["library", "Library"], ["foryou", "For you"], ["playlists", "Playlists"], ["family", "Family"]];
+  // Adding and fixing songs is the owner's job, so only the owner gets the Library tools tab.
+  const tabs: [Tab, string][] = [
+    ["library", "Library"], ["foryou", "For you"], ["playlists", "Playlists"],
+    ...(family.role === "owner" ? [["tools", "Library tools"] as [Tab, string]] : []),
+    ["family", "Family"],
+  ];
   // The search box sticks right under the header, so it needs to know how tall the header is.
   const shellRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -137,7 +142,8 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
         {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} home={home} />}
         {tab === "foryou" && <ForYou lib={lib} />}
         {tab === "playlists" && <Playlists lib={lib} uid={user.uid} />}
-        {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} refresh={lib.refresh} home={home} recheck={checkHome} tracks={[...lib.tracks.values()]} />}
+        {tab === "tools" && family.role === "owner" && <LibraryTools refresh={lib.refresh} home={home} recheck={checkHome} tracks={[...lib.tracks.values()]} />}
+        {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} />}
       </main>
       <PlayerBar />
     </div>
@@ -485,7 +491,7 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
         </p>
       )}
       {tracks.length === 0 ? (
-        <p className="muted">No songs yet. Add music to your NAS, then run "Sync music from NAS" in the Family tab.</p>
+        <p className="muted">No songs yet. Add music to your NAS, then run "Sync music from NAS" in the Library tools tab.</p>
       ) : view === "albums" ? (
         <>
           {!q && recent.length > 1 && (
@@ -670,8 +676,8 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
   );
 }
 
-function Family({ family, uid, reload, refresh, home, recheck, tracks }: { family: FamilyInfo; uid: string; reload: () => Promise<void>; refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void>; tracks: Track[] }) {
-  const [code, setCode] = useState("");
+/** Owner tools for the shared library: where songs come from (NAS, inbox, YouTube) and fixing their names. */
+function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void>; tracks: Track[] }) {
   const [fixOpen, setFixOpen] = useState(false);
   const [nasMsg, setNasMsg] = useState("");
   const syncNas = async (): Promise<boolean> => {
@@ -700,6 +706,26 @@ function Family({ family, uid, reload, refresh, home, recheck, tracks }: { famil
   };
   return (
     <>
+      <h2>Library tools</h2>
+      <Organize syncNas={syncNas} home={home} recheck={recheck} />
+      <p>
+        <button onClick={() => void syncNas()}>Sync music from NAS</button> <small className="muted">{nasMsg}</small>
+      </p>
+      <p>
+        <button onClick={() => setFixOpen((o) => !o)} disabled={home !== null && !home.ok} title={home !== null && !home.ok ? home.error : undefined}>
+          {fixOpen ? "Hide Vietnamese name fixer" : "Fix Vietnamese names…"}
+        </button>
+      </p>
+      {fixOpen && <FixVietnamese tracks={tracks} refresh={refresh} />}
+    </>
+  );
+}
+
+/** Who is in the family, inviting people, and this person's own account. */
+function Family({ family, uid, reload }: { family: FamilyInfo; uid: string; reload: () => Promise<void> }) {
+  const [code, setCode] = useState("");
+  return (
+    <>
       <h2>{family.name}</h2>
       <ul>
         {family.members.map((m) => (
@@ -716,22 +742,6 @@ function Family({ family, uid, reload, refresh, home, recheck, tracks }: { famil
           <button onClick={async () => setCode((await api.invite()).code)}>Create invite code</button>{" "}
           {code && <code className="code">{code}</code>}
         </p>
-      )}
-      {family.role === "owner" && <Organize syncNas={syncNas} home={home} recheck={recheck} />}
-      {family.role === "owner" && (
-        <p>
-          <button onClick={() => void syncNas()}>Sync music from NAS</button> <small className="muted">{nasMsg}</small>
-        </p>
-      )}
-      {family.role === "owner" && (
-        <>
-          <p>
-            <button onClick={() => setFixOpen((o) => !o)} disabled={home !== null && !home.ok} title={home !== null && !home.ok ? home.error : undefined}>
-              {fixOpen ? "Hide Vietnamese name fixer" : "Fix Vietnamese names…"}
-            </button>
-          </p>
-          {fixOpen && <FixVietnamese tracks={tracks} refresh={refresh} />}
-        </>
       )}
       <hr />
       <p><small className="muted">Version {__APP_VERSION__}</small></p>
@@ -780,7 +790,7 @@ let lastSyncAt = 0;
 /**
  * Follows the open Beets runs until none is left (any number of YouTube songs, and one import or enrich), and scans
  * Navidrome and syncs the library after runs finish: at once when everything is done, at most once a minute while
- * more keep coming. It lives outside the component so it keeps going when you leave the Family tab, and the tab picks
+ * more keep coming. It lives outside the component so it keeps going when you leave the Library tools tab, and the tab picks
  * it up again when you come back. `first` are runs the caller has just started, so one that ends before the first
  * look is still noticed.
  */

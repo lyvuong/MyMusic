@@ -61,7 +61,7 @@ All routes are owner-only (the `youtubeOwner` guard), with the id validated agai
   - a list of tracks (start to end, editable title, default "Track N");
   - album name (default: the video title), album artist (default: the channel) and an AI checkbox.
 - Clips are fetched with the Bearer token and played from a blob URL in the page's own `<audio>`. Pause the main player first (`usePlayer()` in `player.tsx`).
-- After "Create album", tell the owner it is queued and offer a button to the Family tab, where `Organize`'s `track()` loop follows the run and syncs the library when it finishes.
+- After "Create album", tell the owner it is queued and offer a button to the Library tools tab, where `Organize`'s `track()` loop follows the run and syncs the library when it finishes.
 
 ## Docs and checks
 - README: a new section next to the YouTube import one, and the new endpoints in the `server.py` docstring.
