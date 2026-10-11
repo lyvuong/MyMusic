@@ -1,4 +1,5 @@
 """Talking back to the Worker: progress while a job runs, and the final report."""
+import json
 import time
 import urllib.error
 import urllib.parse
@@ -34,3 +35,17 @@ def report(run_id, ok, exit_code, logtext, before=None, after=None):
     if after is not None:
         q["after"] = str(after)
     worker_post("/api/beets/agent/report", q, (logtext[-6000:] or "(no output)").encode("utf-8"), tries=3)
+
+
+def worker_json(path, query=None, timeout=120):
+    """POSTs to the Worker and returns its JSON answer, or None when the call failed."""
+    url = config.WORKER + path + ("?" + urllib.parse.urlencode(query) if query else "")
+    req = urllib.request.Request(url, data=b"", method="POST")
+    req.add_header("X-Agent-Key", config.KEY)
+    req.add_header("User-Agent", "mymusic-api/1.0 (+home server)")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        log("worker %s failed: %s" % (path, e))
+        return None

@@ -11,7 +11,7 @@ import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatu
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { recordPlays, popular } from "./plays";
-import { buildAllMixes, getMixes } from "./mixes";
+import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
@@ -146,11 +146,10 @@ app.get("/api/popular", async (c) => c.json({ tracks: await popular(c.env.DB, c.
 /** The caller's AI mixes (one per time of day), built overnight. Empty until the first night run. */
 app.get("/api/mixes", async (c) => c.json({ mixes: await getMixes(c.env.DB, c.get("user").uid) }));
 
-/** Owner only: builds the mixes now instead of waiting for the night run (for testing). */
+/** Builds the caller's own mixes now instead of waiting for the night run (about half a minute). */
 app.post("/api/mixes/refresh", async (c) => {
-  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
-  c.executionCtx.waitUntil(buildAllMixes(c.env, true).then((r) => console.log("mixes refreshed", r)));
-  return c.json({ ok: true });
+  const saved = await buildMixesFor(c.env, c.get("family").familyId, c.get("user").uid, true);
+  return c.json({ saved });
 });
 
 /**
@@ -509,6 +508,16 @@ app.post("/api/beets/youtube", async (c) => {
   return c.json(now, 201);
 });
 
+/**
+ * The home server's nightly job: builds the AI mixes for a slice of members (?offset=&limit=, limit at most 5) and
+ * answers {members, mixes}; it repeats with the next offset until fewer members than the limit come back.
+ */
+app.post("/api/beets/agent/mixes", async (c) => {
+  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
+  const q = c.req.query();
+  return c.json(await buildMixSlice(c.env, Number(q.offset ?? 0), Number(q.limit ?? 2)));
+});
+
 /** The nightly enrich script announces a run: its id as text. It reports the result through /report like an import. */
 app.post("/api/beets/agent/enrich-start", async (c) => {
   if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
@@ -615,10 +624,4 @@ app.get("/api/app/android/:file", (c) => {
   return serveR2(c.env.RELEASES, `android/${file}`, c.req.raw);
 });
 
-export default {
-  fetch: app.fetch,
-  /** Nightly: build every member's AI mixes for the next day (see wrangler.jsonc triggers). */
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(buildAllMixes(env).then((r) => console.log("nightly mixes", r)));
-  },
-};
+export default app;

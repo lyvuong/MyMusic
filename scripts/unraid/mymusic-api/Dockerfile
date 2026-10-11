@@ -6,7 +6,7 @@ FROM python:3.12-alpine
 RUN apk add --no-cache docker-cli inotify-tools
 
 WORKDIR /app
-COPY server.py config.py util.py reporting.py locks.py edit.py http_handler.py watcher.py ./
+COPY server.py config.py util.py reporting.py locks.py edit.py http_handler.py watcher.py mixes.py ./
 COPY jobs ./jobs
 
 # Baked in by CI so /health can say which build is running.

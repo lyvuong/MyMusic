@@ -50,3 +50,29 @@ class Jobs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NightlyMixes(unittest.TestCase):
+    def test_seconds_until_wraps_past_midnight(self):
+        import time
+        from mixes import seconds_until
+        at = lambda h, m=0: time.struct_time((2026, 1, 1, h, m, 0, 0, 1, -1))
+        self.assertEqual(seconds_until(3, at(1)), 2 * 3600)
+        self.assertEqual(seconds_until(3, at(3)), 86400)
+        self.assertEqual(seconds_until(3, at(23, 30)), 3 * 3600 + 1800)
+
+    def test_run_once_pages_until_a_short_slice(self):
+        from mixes import run_once
+        calls = []
+        answers = [{"members": 2, "mixes": 8}, {"members": 2, "mixes": 4}, {"members": 1, "mixes": 4}]
+
+        def post(path, query):
+            calls.append((path, query))
+            return answers[len(calls) - 1]
+
+        self.assertEqual(run_once(post, batch=2), 16)
+        self.assertEqual([q["offset"] for _, q in calls], ["0", "2", "4"])
+
+    def test_run_once_reports_an_unreachable_worker(self):
+        from mixes import run_once
+        self.assertIsNone(run_once(lambda p, q: None, batch=2))

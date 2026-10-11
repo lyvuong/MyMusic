@@ -21,3 +21,7 @@ AUTO_IMPORT_DEBOUNCE = float(os.environ.get("AUTO_IMPORT_DEBOUNCE", "20"))  # se
 VERSION = os.environ.get("MYMUSIC_API_VERSION", "dev")  # the git commit of the image, baked in by CI
 
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+# Nightly AI mixes: the hour (0-23, container time) the Worker is asked to build every member's day-part mixes; -1 = never.
+MIXES_HOUR = int(os.environ.get("MIXES_HOUR", "3"))
+MIXES_BATCH = 2  # members per request; each takes four AI calls, and one request must stay short

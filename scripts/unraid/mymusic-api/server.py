@@ -19,7 +19,8 @@ files) and the host's /tmp (to share /tmp/beets-import.lock with beets-enrich.sh
 in the README for the compose entry.
 
 The code is split by job: config (settings), locks (library lock + one job at a time), reporting (back to the Worker),
-jobs/ (import, enrich, youtube), watcher (imports by itself when files arrive), edit (name and cover edits),
+jobs/ (import, enrich, youtube), watcher (imports by itself when files arrive), mixes (asks the Worker for the
+nightly AI mixes), edit (name and cover edits),
 http_handler (routing). Copy the whole folder to the server.
 """
 import os
@@ -27,6 +28,7 @@ import threading
 from http.server import ThreadingHTTPServer
 
 import config
+import mixes
 import reporting
 import watcher
 from http_handler import Handler
@@ -46,6 +48,7 @@ def main():
     # Runs the Worker still lists as running died with the previous process: close them so queued YouTube links go on.
     threading.Thread(target=reporting.worker_post, args=("/api/beets/agent/reset",), kwargs={"tries": 3}, daemon=True).start()
     watcher.start()
+    mixes.start()
     ThreadingHTTPServer(("0.0.0.0", config.PORT), Handler).serve_forever()
 
 

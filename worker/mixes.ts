@@ -1,9 +1,10 @@
 import { DAYPARTS, DAYPART_HINT, suggest, SuggestError, type Daypart } from "./suggest";
 
 /**
- * Nightly AI mixes. A cron trigger builds, for every family member, one playlist per time of day (morning, afternoon,
- * evening, night) from their ratings and what the family plays most. The app downloads them on sync, so the car screen
- * never waits for the AI. Day-parts are relative; the app picks the one that matches the phone's local hour.
+ * Nightly AI mixes. The home server calls /api/beets/agent/mixes once a night (the free Workers plan has no spare cron
+ * triggers); it builds, for every family member, one playlist per time of day (morning, afternoon, evening, night) from
+ * their ratings and what the family plays most. The app downloads them on sync, so the car screen never waits for the
+ * AI. Day-parts are relative; the app picks the one that matches the phone's local hour.
  */
 
 export interface Mix {
@@ -15,7 +16,7 @@ export interface Mix {
 }
 
 const FRESH_MS = 20 * 3600 * 1000;
-const MAX_MEMBERS_PER_RUN = 40; // keeps a run inside the Workers AI daily allowance; the rest go next night
+const MAX_MEMBERS_PER_CALL = 5; // 4 AI calls each: keeps one request short
 
 export async function getMixes(db: D1Database, uid: string): Promise<Mix[]> {
   const r = await db.prepare("SELECT daypart, title, intro, track_ids, generated_at FROM daily_mixes WHERE uid = ?")
@@ -54,15 +55,18 @@ export async function buildMixesFor(env: Env, familyId: string, uid: string, for
   return saved;
 }
 
-/** The cron entry point: every member of every family, oldest mixes first. */
-export async function buildAllMixes(env: Env, force = false): Promise<{ members: number; mixes: number }> {
+/**
+ * One slice of the nightly run: members `offset` .. `offset + limit` in a stable order. The home server calls this
+ * repeatedly (offset 0, limit, 2 * limit, ...) until `members` comes back smaller than `limit`; each call stays
+ * short enough for one request. Day-parts built less than 20 hours ago are left alone.
+ */
+export async function buildMixSlice(env: Env, offset: number, limit: number): Promise<{ members: number; mixes: number }> {
   if (!env.AI) return { members: 0, mixes: 0 };
-  const members = await env.DB.prepare(
-    "SELECT m.uid, m.family_id, COALESCE(MIN(d.generated_at), 0) AS oldest FROM members m " +
-      "LEFT JOIN daily_mixes d ON d.uid = m.uid GROUP BY m.uid ORDER BY oldest ASC LIMIT ?",
-  ).bind(MAX_MEMBERS_PER_RUN).all<{ uid: string; family_id: string }>();
+  const take = Math.min(Math.max(Math.floor(limit) || 1, 1), MAX_MEMBERS_PER_CALL);
+  const members = await env.DB.prepare("SELECT uid, family_id FROM members ORDER BY uid LIMIT ? OFFSET ?")
+    .bind(take, Math.max(Math.floor(offset) || 0, 0)).all<{ uid: string; family_id: string }>();
   let mixes = 0;
-  for (const m of members.results) mixes += await buildMixesFor(env, m.family_id, m.uid, force);
+  for (const m of members.results) mixes += await buildMixesFor(env, m.family_id, m.uid);
   return { members: members.results.length, mixes };
 }
 

@@ -105,6 +105,7 @@ One-time setup:
        - AUTO_IMPORT=1               # import by itself when files land in the inbox (off when unset)
        # - AUTO_IMPORT_DEBOUNCE=20   # seconds a file or folder must stay unchanged before it is imported
        # - MAX_YT=3                  # YouTube downloads at the same time
+       # - MIXES_HOUR=3              # hour (container time) the AI mixes are built each night; -1 = never
      labels:
        - com.centurylinklabs.watchtower.enable=true   # lets Watchtower (below) update this container
      volumes:
@@ -221,6 +222,8 @@ An album page has **🖼 Add cover** (or **Replace cover** when it has one). The
 Every member rates songs 1-5 stars (web: stars on each row and in the player bar; phone: the song menu -> **Rate...** and the stars on the now-playing screen; tap the current star again to clear). Ratings are per person (table `ratings`, migration `0008_ratings.sql`) and the phone queues them while offline.
 
 The **For you** tab asks `POST /api/suggest`, which sends the caller's ratings (favourite artists, loved and disliked songs) plus about 220 candidate songs from the family library to **Cloudflare Workers AI** (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, free daily allowance, no API key). The answer is a themed playlist built only from songs in the library (the model picks candidate numbers, so it cannot invent songs), a reason per song, and a few artists to discover that are not in the library. An optional mood or occasion steers it. Needs the `ai` binding in `wrangler.jsonc` (already there) and at least 3 ratings or a mood. Change the model in `worker/suggest.ts`.
+
+**Nightly car mixes.** `mymusic-api` asks the Worker once a night (`MIXES_HOUR`, default 03:00 container time) to build, for every member, one AI mix per time of day (morning, afternoon, evening, night) from their ratings and what the family plays most (`POST /api/beets/agent/mixes`, a few members per request, same key as the other agent routes). The app downloads them on sync and Android Auto's **For You** tab shows the one for the current hour; with no mix yet it falls back to a pick made on the phone. The home server is the clock because the free Workers plan allows only 5 cron triggers per account. A signed-in member can build their own mixes right away with `POST /api/mixes/refresh`. Plays are recorded by the app (`POST /api/plays`) and feed the family's popular list (`GET /api/popular`). Car covers are `GET /api/art/:id?w=car` (512 px, made with the Cloudflare Images binding `IMAGES` and cached in R2).
 
 ## Casting to a Google device (web app)
 
