@@ -60,7 +60,7 @@ Parts:
 
 Host `Lincoln-Unraid`. Music lives in the share `/mnt/user/Music`. The Worker talks to two things there, both through Cloudflare Tunnels: Navidrome (Subsonic API, `NAS_*`) and the `mymusic-api` container (`HOME_API_URL`). Never put passwords or tokens in this file.
 
-Flow: drop files in `/mnt/user/Music/_inbox` (File Browser or the SMB share) -> `mymusic-api` notices them (inotify, no polling; or press **Organize** in the web app) -> Beets organizes them into `/mnt/user/Music/Artist/Album/` -> enrich runs once the inbox has gone quiet -> the web app (when open) scans Navidrome and syncs the library.
+Flow: drop files in `/mnt/user/Music/_inbox` (File Browser or the SMB share) -> `mymusic-api` notices them (inotify, no polling; or press **Organize** in the web app) -> Beets organizes them into `/mnt/user/Music/Artist/Album/` -> enrich runs once the inbox has gone quiet -> the web app (when open) scans Navidrome and syncs the library. The sync only writes songs that are new or changed (a sync with nothing new writes 0 rows), so frequent imports stay far below D1's free limit of 100k row writes a day; removed songs are found by comparing the NAS list with the library at the end of the sync.
 
 ### Compose stack
 One `compose.yaml` runs five containers: `navidrome`, `filebrowser`, `beets`, `yt-dlp` and `mymusic-api` (all `restart: unless-stopped`; `:latest` images; `mymusic-api` is `ghcr.io/lyvuong/mymusic-api:latest`, built by CI from `scripts/unraid/mymusic-api/`). Beets runs as root (`PUID=0`, `PGID=0`, `TZ=America/New_York`) like File Browser, so it can write to files File Browser uploaded.

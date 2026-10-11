@@ -673,18 +673,21 @@ function Family({ family, uid, reload, refresh, home, recheck }: { family: Famil
   const [code, setCode] = useState("");
   const [nasMsg, setNasMsg] = useState("");
   const syncNas = async (): Promise<boolean> => {
-    const run = Date.now();
     let offset = 0;
-    let removed = 0;
+    const ids: string[] = [];
     try {
       for (;;) {
         setNasMsg(`Syncing… ${offset} songs`);
-        const r = await api.syncNas(offset, run);
+        const r = await api.syncNas(offset);
         offset = r.next;
-        removed += r.removed;
+        ids.push(...r.ids);
         if (r.done) break;
       }
-      setNasMsg(`Done: ${offset} songs from the NAS${removed ? `, ${removed} removed` : ""}.`);
+      const { removed, skippedRemoval } = await api.finishNasSync(ids);
+      setNasMsg(
+        `Done: ${offset} songs from the NAS${removed ? `, ${removed} removed` : ""}.` +
+          (skippedRemoval ? ` Not removing ${skippedRemoval} songs: the NAS list looked incomplete.` : ""),
+      );
       return true;
     } catch (e) {
       setNasMsg(e instanceof Error ? e.message : "Sync failed");

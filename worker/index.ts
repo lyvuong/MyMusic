@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { signedQuery, verifySigned } from "./cast";
 import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
@@ -8,7 +9,7 @@ import { cleanName, delta, editTrack, renameGroup, savePlaylist } from "./librar
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
-import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
+import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { recordPlays, popular } from "./plays";
 import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
@@ -18,6 +19,17 @@ import { ingest } from "./upload";
 
 type Vars = { user: User; family: Membership };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
+
+// Anything a route does not catch: say what went wrong instead of a bare 500, and keep the details in the logs.
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse();
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`${c.req.method} ${c.req.path} failed:`, msg);
+  if (/row write limit|exceeded D1's/i.test(msg)) {
+    return c.json({ error: "The database's daily write limit was reached. It resets at midnight UTC." }, 503);
+  }
+  return c.json({ error: `Server error: ${msg.split("\n")[0]!.slice(0, 160)}` }, 500);
+});
 
 // Cast devices fetch media themselves (cross-origin, with Range): answer CORS before the auth check.
 app.use("/api/stream/*", cors({ origin: "*", allowHeaders: ["Range", "Authorization"], exposeHeaders: ["Content-Length", "Content-Range", "Accept-Ranges"] }));
@@ -393,9 +405,15 @@ app.post("/api/cast/media", async (c) => {
 app.post("/api/nas/sync", async (c) => {
   if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
   if (!nasEnabled(c.env)) return c.json({ error: "NAS is not configured" }, 501);
-  const { offset, run } = await c.req.json<{ offset?: number; run?: number }>();
+  const b = await c.req.json<{ offset?: number; finish?: boolean; ids?: unknown }>().catch(() => ({}) as { offset?: number; finish?: boolean; ids?: unknown });
+  const fam = c.get("family").familyId;
   try {
-    return c.json(await syncPage(c.env, c.get("family").familyId, Math.max(0, Number(offset) || 0), Number(run) || Date.now()));
+    if (b.finish) {
+      // The last call: every id the NAS listed, so songs that are gone can be marked removed.
+      if (!Array.isArray(b.ids) || b.ids.length > 20000 || !b.ids.every((i) => typeof i === "string")) return c.json({ error: "ids must be a list of song ids" }, 400);
+      return c.json(await finishSync(c.env, fam, b.ids as string[]));
+    }
+    return c.json(await syncPage(c.env, fam, Math.max(0, Number(b.offset) || 0)));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : "NAS sync failed" }, 502);
   }

@@ -55,8 +55,11 @@ export const api = {
   savePlaylist: (p: { id: string; name: string; shared: boolean; trackIds: string[] }) =>
     call<void>("PUT", `/api/playlists/${p.id}`, { name: p.name, shared: p.shared, trackIds: p.trackIds }),
   deletePlaylist: (id: string) => call<void>("DELETE", `/api/playlists/${id}`),
-  syncNas: (offset: number, run: number) =>
-    call<{ imported: number; next: number; done: boolean; removed: number }>("POST", "/api/nas/sync", { offset, run }),
+  syncNas: (offset: number) =>
+    call<{ imported: number; written: number; next: number; done: boolean; ids: string[] }>("POST", "/api/nas/sync", { offset }),
+  /** Last step of a sync: every song id the NAS listed, so the Worker can mark the ones that are gone. */
+  finishNasSync: (ids: string[]) =>
+    call<{ removed: number; skippedRemoval: number }>("POST", "/api/nas/sync", { finish: true, ids }),
   scanNas: () => call<{ ok: boolean }>("POST", "/api/nas/scan"),
   nasScanning: () => call<{ scanning: boolean }>("GET", "/api/nas/scan"),
   serverStatus: () => call<ServerStatus>("GET", "/api/server/status"),
