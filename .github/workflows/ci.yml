@@ -26,6 +26,16 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  home-api:
+    name: Home API (Unraid)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s scripts/unraid/mymusic-api/tests
+
   android:
     name: Android app
     runs-on: ubuntu-24.04

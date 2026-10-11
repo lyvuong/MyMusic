@@ -79,7 +79,7 @@ One `compose.yaml` runs five containers: `navidrome`, `filebrowser`, `beets`, `y
 - Album art: `fetchart: auto: yes, minwidth: 500` (smaller covers are rejected); `embedart: auto: yes`; cover file name `cover` (`art_filename`). For a one-off run on existing albums: `docker exec beets beet fetchart` (add `-f` to replace existing covers, or a query like `albumartist:"Paul Simon"`), then `beet embedart`. Albums that match nothing get no cover; the web player's "Find missing covers online" button (iTunes search) fills those in.
 
 ### mymusic-api (container `mymusic-api`): what the web app asks the server to do
-A small Python service (`scripts/unraid/mymusic-api/server.py`, standard library only) that runs `docker exec beets ...` for the web app. The Worker calls it through a Cloudflare Tunnel, like it calls Navidrome, protected by the Cloudflare Access service token plus the shared key (`BEETS_AGENT_KEY`, header `X-Agent-Key`). Nothing polls. The endpoints are fixed and no command or path comes from a request:
+A small Python service (`scripts/unraid/mymusic-api/`, entry point `server.py`, standard library only) that runs `docker exec beets ...` for the web app. The Worker calls it through a Cloudflare Tunnel, like it calls Navidrome, protected by the Cloudflare Access service token plus the shared key (`BEETS_AGENT_KEY`, header `X-Agent-Key`). Nothing polls. The endpoints are fixed and no command or path comes from a request:
 
 | Endpoint | What it does |
 |---|---|
@@ -93,7 +93,7 @@ There is **no fallback**: if the server cannot be reached, the app disables Orga
 
 One-time setup:
 1. Pick a random key (`openssl rand -hex 32`) and store it as a Worker secret: `npx wrangler secret put BEETS_AGENT_KEY`. On Unraid save the same key, on one line, to `/boot/config/mymusic-agent.key` (`chmod 600`). `beets-enrich.sh` uses the same file.
-2. Copy `scripts/unraid/mymusic-api/server.py` to `/mnt/user/appdata/mymusic-api/server.py` and add this service to the compose stack, then `docker compose up -d mymusic-api`:
+2. Copy the contents of `scripts/unraid/mymusic-api/` (`server.py` plus the modules next to it: `config.py`, `locks.py`, `jobs/`, ...; not `tests/`) to `/mnt/user/appdata/mymusic-api/` and add this service to the compose stack, then `docker compose up -d mymusic-api`:
    ```yaml
    mymusic-api:
      image: python:3.12-alpine
@@ -110,7 +110,7 @@ One-time setup:
        - /mnt/user/appdata/beets:/beets-appdata           # auto-import.log, enrich.log, tag-edits.log
        - /tmp:/host-tmp                                   # shares /tmp/beets-import.lock with beets-enrich.sh
    ```
-   The Docker socket gives this container root-level control of the server, which is why it only exposes the three fixed endpoints behind the key and Cloudflare Access. After changing `server.py`, run `docker restart mymusic-api`. Check it: `curl -H "X-Agent-Key: $(cat /boot/config/mymusic-agent.key)" http://localhost:8099/health`.
+   The Docker socket gives this container root-level control of the server, which is why it only exposes the three fixed endpoints behind the key and Cloudflare Access. After changing any of those files, copy them again and run `docker restart mymusic-api`. Check it: `curl -H "X-Agent-Key: $(cat /boot/config/mymusic-agent.key)" http://localhost:8099/health`.
 3. Cloudflare Zero Trust: add a tunnel public hostname (`mymusic-api.lv5.uk`) pointing to `http://<unraid-ip>:8099` (or the container name if the tunnel runs in the same Docker network), and add it to the Access application/policy that allows the service token the Worker already uses for Navidrome.
 4. `HOME_API_URL` in `wrangler.jsonc` is that hostname; pushing to `main` deploys it.
 5. The Navidrome user in `NAS_USER` must be an **admin**, or "start scan" is refused and the app cannot trigger rescans after an import or an edit.
