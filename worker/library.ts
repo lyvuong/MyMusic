@@ -91,6 +91,37 @@ export async function editTrack(
 }
 
 /**
+ * Changes the titles of up to 90 songs at once (the Vietnamese clean-up). Like editTrack, `beforeCommit` gets every plan
+ * first so the files can be written in one go; if it throws nothing is changed here. Unknown songs and unchanged
+ * titles are skipped. The songs are flagged as edited so the NAS sync keeps the new titles.
+ */
+export async function editTitles(
+  db: D1Database, familyId: string, edits: { id: string; title: string }[],
+  beforeCommit?: (plans: TrackEditResult[]) => Promise<void>,
+): Promise<{ updated: number; skipped: number }> {
+  if (edits.length === 0) return { updated: 0, skipped: 0 };
+  const rows = await db.prepare(
+    `SELECT id, source, title, artist, album, track_no FROM tracks WHERE family_id = ? AND deleted = 0 AND id IN (${edits.map(() => "?").join(",")})`,
+  ).bind(familyId, ...edits.map((e) => e.id)).all<{ id: string; source: "r2" | "nas"; title: string; artist: string; album: string; track_no: number }>();
+  const byId = new Map(rows.results.map((r) => [r.id, r]));
+  const todo: { id: string; plan: TrackEditResult }[] = [];
+  for (const e of edits) {
+    const row = byId.get(e.id);
+    if (!row || row.title === e.title) continue;
+    todo.push({
+      id: e.id,
+      plan: { source: row.source, before: { title: row.title, artist: row.artist, album: row.album, trackNo: row.track_no }, applied: { title: e.title } },
+    });
+  }
+  if (todo.length === 0) return { updated: 0, skipped: edits.length };
+  await beforeCommit?.(todo.map((t) => t.plan));
+  const now = Date.now();
+  await db.batch(todo.map((t) =>
+    db.prepare("UPDATE tracks SET title = ?, edited = 1, updated_at = ? WHERE id = ? AND family_id = ?").bind(t.plan.applied.title, now, t.id, familyId)));
+  return { updated: todo.length, skipped: edits.length - todo.length };
+}
+
+/**
  * Renames an artist or an album on all of its songs. When `to` is a name that already exists the two become one,
  * which is how albums (and artists) are merged; an album with no songs left simply disappears.
  * `from` must be the stored name exactly. Returns how many songs changed, the final name, and how many of those

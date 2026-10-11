@@ -73,6 +73,12 @@ export const api = {
   suggest: (prompt: string) => call<Suggestion>("POST", "/api/suggest", { prompt }),
   fetchArt: () => call<{ updated: number; remaining: number }>("POST", "/api/art/fetch"),
   editTrack: (id: string, e: { title?: string; artist?: string; album?: string; trackNo?: number; ai?: boolean }) => call<{ ok: boolean; filesUpdated: boolean; warning: string }>("PATCH", `/api/tracks/${id}`, e),
+  /** Up to 90 titles at once (owner only); the files are rewritten on the home server first. */
+  editTitles: (edits: { id: string; title: string }[]) =>
+    call<{ updated: number; skipped: number; ok: boolean; filesUpdated: boolean; warning: string }>("POST", "/api/library/titles", { edits }),
+  /** AI: accents for up to 25 names written without them. Only answers that add accents and nothing else come back. */
+  restoreVietnamese: (items: { key: string; text: string; artist?: string; album?: string }[]) =>
+    call<{ results: { key: string; text: string }[] }>("POST", "/api/vietnamese/restore", { items }),
   /** Renames an artist or album on all its songs; an existing name merges the two. */
   renameGroup: (kind: "artist" | "album", from: string, to: string) => call<{ updated: number; filesUpdated: boolean; warning: string }>("POST", "/api/library/rename", { kind, from, to }),
   setAlbumCover: (album: string, image: string) => call<{ ok: boolean; filesUpdated: boolean; warning: string }>("POST", "/api/library/cover", { album, image }),

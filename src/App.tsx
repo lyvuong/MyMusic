@@ -7,6 +7,7 @@ import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } fro
 import { buildIndex, searchTracks } from "./search";
 import { CoverPick } from "./CoverPick";
 import { EditDialog } from "./EditDialog";
+import { FixVietnamese } from "./FixVietnamese";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
 import { RatingsProvider, Stars } from "./ratings";
@@ -136,7 +137,7 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
         {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} home={home} />}
         {tab === "foryou" && <ForYou lib={lib} />}
         {tab === "playlists" && <Playlists lib={lib} uid={user.uid} />}
-        {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} refresh={lib.refresh} home={home} recheck={checkHome} />}
+        {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} refresh={lib.refresh} home={home} recheck={checkHome} tracks={[...lib.tracks.values()]} />}
       </main>
       <PlayerBar />
     </div>
@@ -669,8 +670,9 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
   );
 }
 
-function Family({ family, uid, reload, refresh, home, recheck }: { family: FamilyInfo; uid: string; reload: () => Promise<void>; refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void> }) {
+function Family({ family, uid, reload, refresh, home, recheck, tracks }: { family: FamilyInfo; uid: string; reload: () => Promise<void>; refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void>; tracks: Track[] }) {
   const [code, setCode] = useState("");
+  const [fixOpen, setFixOpen] = useState(false);
   const [nasMsg, setNasMsg] = useState("");
   const syncNas = async (): Promise<boolean> => {
     let offset = 0;
@@ -720,6 +722,16 @@ function Family({ family, uid, reload, refresh, home, recheck }: { family: Famil
         <p>
           <button onClick={() => void syncNas()}>Sync music from NAS</button> <small className="muted">{nasMsg}</small>
         </p>
+      )}
+      {family.role === "owner" && (
+        <>
+          <p>
+            <button onClick={() => setFixOpen((o) => !o)} disabled={home !== null && !home.ok} title={home !== null && !home.ok ? home.error : undefined}>
+              {fixOpen ? "Hide Vietnamese name fixer" : "Fix Vietnamese names…"}
+            </button>
+          </p>
+          {fixOpen && <FixVietnamese tracks={tracks} refresh={refresh} />}
+        </>
       )}
       <hr />
       <p><small className="muted">Version {__APP_VERSION__}</small></p>

@@ -5,7 +5,7 @@ import { signedQuery, verifySigned } from "./cast";
 import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
 import { findAlbumArt, findArtistImage } from "./artwork";
-import { cleanName, delta, editTrack, renameGroup, savePlaylist } from "./library";
+import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
@@ -16,6 +16,7 @@ import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
+import { restoreAccents, VietnameseError, type AccentItem } from "./vietnamese";
 
 type Vars = { user: User; family: Membership };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -274,6 +275,54 @@ app.post("/api/library/rename", async (c) => {
     return c.json({ updated: r.updated, ...(await afterFileEdit(c.env, c.executionCtx, files)) });
   } catch (e) {
     if (e instanceof HomeError) return c.json({ error: e.message }, 502);
+    throw e;
+  }
+});
+
+/**
+ * Changes the titles of up to 90 songs at once (owner only), used by the Vietnamese clean-up. The files are written
+ * first; if that fails nothing changes. Artist and album names go through /api/library/rename.
+ */
+app.post("/api/library/titles", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const b = await c.req.json<{ edits?: unknown }>().catch(() => null);
+  const raw = Array.isArray(b?.edits) ? (b.edits as { id?: unknown; title?: unknown }[]) : null;
+  if (!raw || raw.length === 0 || raw.length > 90) return c.json({ error: "send 1 to 90 edits" }, 400);
+  const edits: { id: string; title: string }[] = [];
+  for (const e of raw) {
+    const title = cleanName(e?.title);
+    if (typeof e?.id !== "string" || !e.id || !title) return c.json({ error: "every edit needs an id and a title" }, 400);
+    edits.push({ id: e.id, title });
+  }
+  let files: Awaited<ReturnType<typeof homeEdit>> | null = null;
+  try {
+    const r = await editTitles(c.env.DB, c.get("family").familyId, edits, async (plans) => {
+      const ops = plans.filter((p) => p.source === "nas").map((p) => ({ kind: "song", match: p.before, set: p.applied }) satisfies TagOp);
+      if (ops.length) files = await homeEdit(c.env, ops);
+    });
+    return c.json({ ...r, ...(await afterFileEdit(c.env, c.executionCtx, files)) });
+  } catch (e) {
+    if (e instanceof HomeError) return c.json({ error: e.message }, 502);
+    throw e;
+  }
+});
+
+/** Asks the AI to add Vietnamese accents to up to 25 names written without them (owner only). */
+app.post("/api/vietnamese/restore", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const b = await c.req.json<{ items?: unknown }>().catch(() => null);
+  const raw = Array.isArray(b?.items) ? (b.items as Record<string, unknown>[]) : null;
+  if (!raw || raw.length === 0 || raw.length > 25) return c.json({ error: "send 1 to 25 names" }, 400);
+  const items: AccentItem[] = [];
+  for (const it of raw) {
+    const text = typeof it?.text === "string" ? it.text.trim() : "";
+    if (typeof it?.key !== "string" || it.key.length > 80 || !text || text.length > 200) return c.json({ error: "bad name" }, 400);
+    items.push({ key: it.key, text, artist: typeof it.artist === "string" ? it.artist.slice(0, 200) : undefined, album: typeof it.album === "string" ? it.album.slice(0, 200) : undefined });
+  }
+  try {
+    return c.json({ results: await restoreAccents(c.env, items) });
+  } catch (e) {
+    if (e instanceof VietnameseError) return c.json({ error: e.message }, e.status);
     throw e;
   }
 });
