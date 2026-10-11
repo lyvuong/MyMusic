@@ -9,6 +9,8 @@ export interface EditField {
   numeric?: boolean;
   /** Empty is rejected for this field. */
   required?: boolean;
+  /** A tick box: the value is "1" when ticked, "" when not. */
+  checkbox?: boolean;
 }
 
 /** Lowercase, no diacritics (đ -> d), words separated by single spaces: "Hương  Cần" and "huong can" compare equal. */
@@ -83,7 +85,12 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}>
       <form className="modal card" role="dialog" aria-modal="true" aria-label={title} onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <h3>{title}</h3>
-        {fields.map((f, i) => (
+        {fields.map((f, i) => f.checkbox ? (
+          <label key={f.key} className="field check">
+            <input type="checkbox" checked={values[f.key] === "1"} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.checked ? "1" : "" }))} />
+            <span>{f.label}</span>
+          </label>
+        ) : (
           <label key={f.key} className="field">
             <span>{f.label}</span>
             <input

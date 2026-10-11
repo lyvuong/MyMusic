@@ -2,13 +2,13 @@ import type { Playlist, Track } from "../shared/types";
 
 interface TrackRow {
   id: string; source: "r2" | "nas"; title: string; artist: string; album: string; duration: number;
-  track_no: number; art_key: string | null; size: number; etag: string; mime: string; updated_at: number; deleted: number;
+  track_no: number; art_key: string | null; size: number; etag: string; mime: string; updated_at: number; deleted: number; ai: number;
 }
 
 export const toTrack = (r: TrackRow): Track => ({
   id: r.id, source: r.source, title: r.title, artist: r.artist, album: r.album, duration: r.duration,
   trackNo: r.track_no, hasArt: !!r.art_key, size: r.size, etag: r.etag, mime: r.mime,
-  updatedAt: r.updated_at, deleted: !!r.deleted,
+  updatedAt: r.updated_at, deleted: !!r.deleted, ai: !!r.ai,
 });
 
 /**
@@ -36,7 +36,7 @@ export async function delta(db: D1Database, familyId: string, uid: string, since
 /** Text typed by a person: Unicode NFC (so Vietnamese diacritics compare equal whatever produced them), trimmed. */
 export const cleanName = (s: unknown, max = 200) => String(s ?? "").normalize("NFC").replace(/\s+/g, " ").trim().slice(0, max);
 
-export interface TrackEdit { title?: string; artist?: string; album?: string; trackNo?: number }
+export interface TrackEdit { title?: string; artist?: string; album?: string; trackNo?: number; ai?: boolean }
 
 /**
  * An artist or album name may already exist spelled with decomposed diacritics (common in file tags). Returns that
@@ -64,8 +64,8 @@ export interface TrackEditResult {
 export async function editTrack(
   db: D1Database, familyId: string, id: string, e: TrackEdit, beforeCommit?: (plan: TrackEditResult) => Promise<void>,
 ): Promise<TrackEditResult | null> {
-  const row = await db.prepare("SELECT source, title, artist, album, track_no FROM tracks WHERE id = ? AND family_id = ? AND deleted = 0")
-    .bind(id, familyId).first<{ source: "r2" | "nas"; title: string; artist: string; album: string; track_no: number }>();
+  const row = await db.prepare("SELECT source, title, artist, album, track_no, ai FROM tracks WHERE id = ? AND family_id = ? AND deleted = 0")
+    .bind(id, familyId).first<{ source: "r2" | "nas"; title: string; artist: string; album: string; track_no: number; ai: number }>();
   if (!row) return null;
   const before = { title: row.title, artist: row.artist, album: row.album, trackNo: row.track_no };
   const applied: TrackEditResult["applied"] = {};
@@ -75,11 +75,18 @@ export async function editTrack(
   if (e.trackNo !== undefined) applied.trackNo = e.trackNo;
   // Only what really changed goes to the files.
   for (const k of Object.keys(applied) as (keyof typeof applied)[]) if (applied[k] === before[k]) delete applied[k];
-  if (Object.keys(applied).length === 0) return { source: row.source, before, applied };
+  if (Object.keys(applied).length === 0) {
+    // Only the AI badge changed: no file is touched, and the song is not flagged as edited (names still follow the NAS).
+    if (e.ai !== undefined && e.ai !== !!row.ai) {
+      await db.prepare("UPDATE tracks SET ai = ?, updated_at = ? WHERE id = ? AND family_id = ?").bind(e.ai ? 1 : 0, Date.now(), id, familyId).run();
+    }
+    return { source: row.source, before, applied };
+  }
   // Lets the caller write the files first; if it throws, nothing is changed here.
   await beforeCommit?.({ source: row.source, before, applied });
-  await db.prepare("UPDATE tracks SET title = ?, artist = ?, album = ?, track_no = ?, edited = 1, updated_at = ? WHERE id = ? AND family_id = ?")
-    .bind(applied.title ?? before.title, applied.artist ?? before.artist, applied.album ?? before.album, applied.trackNo ?? before.trackNo, Date.now(), id, familyId).run();
+  await db.prepare("UPDATE tracks SET title = ?, artist = ?, album = ?, track_no = ?, ai = ?, edited = 1, updated_at = ? WHERE id = ? AND family_id = ?")
+    .bind(applied.title ?? before.title, applied.artist ?? before.artist, applied.album ?? before.album, applied.trackNo ?? before.trackNo,
+      e.ai === undefined ? row.ai : e.ai ? 1 : 0, Date.now(), id, familyId).run();
   return { source: row.source, before, applied };
 }
 

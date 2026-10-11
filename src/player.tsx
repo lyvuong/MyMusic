@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Track } from "../shared/types";
 import { api } from "./api";
-import { ArtistPic, Cover } from "./art";
+import { AiBadge, ArtistPic, Cover } from "./art";
 import { castLoadQueue, castPlayPause, castSeek, getCast, initCast, startCastSession, stopCastSession, subscribeCast } from "./cast";
 import { Stars } from "./ratings";
 
@@ -201,7 +201,7 @@ export function PlayerBar() {
       <div className="player-info">
         <Cover track={p.current} seed={p.current.album || p.current.title} className="md" />
         <div className="player-title">
-          <strong>{p.current.title}</strong>
+          <strong>{p.current.title}{p.current.ai && <> <AiBadge /></>}</strong>
           <span>{[p.current.artist, p.current.album].filter(Boolean).join(" · ")}</span>
           {p.cast.casting && <span className="cast-note">Casting to {p.cast.device || "a device"}</span>}
           {p.cast.error && <span className="error" role="alert">{p.cast.error}</span>}

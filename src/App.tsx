@@ -2,7 +2,7 @@ import { onAuthStateChanged, type User } from "firebase/auth";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, Track, YoutubeInfo } from "../shared/types";
 import { api } from "./api";
-import { ArtistPic, Cover } from "./art";
+import { AiBadge, ArtistPic, Cover } from "./art";
 import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } from "./browse";
 import { CoverPick } from "./CoverPick";
 import { EditDialog } from "./EditDialog";
@@ -154,7 +154,7 @@ function TrackRow({ t, queue, extra, number, hideArtist, select, note }: { t: Tr
         <span className="badge">{active && p.playing ? "♪" : "▶"}</span>
       </button>
       <span className="grow">
-        <strong>{t.title}</strong>
+        <strong>{t.title}{t.ai && <> <AiBadge /></>}</strong>
         <small>{[hideArtist ? "" : t.artist, number === undefined ? t.album : ""].filter(Boolean).join(" · ")}</small>
         {note && <small className="muted">{note}</small>}
       </span>
@@ -350,9 +350,10 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
             { key: "artist", label: "Artist", value: t.artist, options: allArtists.map((a) => a.name) },
             { key: "album", label: "Album", value: t.album, options: allAlbums.map((a) => a.name) },
             { key: "trackNo", label: "Track number", value: t.trackNo ? String(t.trackNo) : "", numeric: true },
+            { key: "ai", label: "Made by AI (shows a badge)", value: t.ai ? "1" : "", checkbox: true },
           ]}
           onSave={async (v) => {
-            const r = await api.editTrack(t.id, { title: v.title, artist: v.artist, album: v.album, trackNo: Number(v.trackNo) || 0 });
+            const r = await api.editTrack(t.id, { title: v.title, artist: v.artist, album: v.album, trackNo: Number(v.trackNo) || 0, ai: v.ai === "1" });
             await refresh();
             flash(`Updated "${v.title.trim()}"${r?.warning ? ` ${r.warning}` : ""}`);
           }}
@@ -801,6 +802,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
   const [ytUrl, setYtUrl] = useState("");
   const [yt, setYt] = useState<{ url: string; info: YoutubeInfo } | null>(null);
   const [ytFields, setYtFields] = useState({ title: "", artist: "", album: "" });
+  const [ytAi, setYtAi] = useState(false);
   const [ytBusy, setYtBusy] = useState(false);
   const [ytErr, setYtErr] = useState("");
   const lookUp = async () => {
@@ -811,6 +813,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
       const info = await api.youtubeInfo(url);
       setYt({ url, info });
       setYtFields({ title: info.title, artist: info.artist, album: info.album });
+      setYtAi(info.aiHint);
     } catch (e) {
       setYt(null);
       setYtErr(e instanceof Error ? e.message : "Could not read that link");
@@ -822,7 +825,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
     if (!yt) return;
     setYtErr("");
     try {
-      const run = await api.importYoutube({ url: yt.url, ...ytFields });
+      const run = await api.importYoutube({ url: yt.url, ...ytFields, ai: ytAi });
       setYt(null);
       setYtUrl("");
       await followRun(run, () => sync.current());
@@ -869,6 +872,12 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
               <label>Title <input value={ytFields.title} onChange={(e) => setYtFields({ ...ytFields, title: e.target.value })} /></label>{" "}
               <label>Artist <input value={ytFields.artist} onChange={(e) => setYtFields({ ...ytFields, artist: e.target.value })} /></label>{" "}
               <label>Album (optional) <input value={ytFields.album} onChange={(e) => setYtFields({ ...ytFields, album: e.target.value })} /></label>
+            </p>
+            <p>
+              <label>
+                <input type="checkbox" checked={ytAi} onChange={(e) => setYtAi(e.target.checked)} /> Made by AI (shows a badge)
+                {yt.info.aiHint && <small className="muted"> · the video says it is AI-generated</small>}
+              </label>
             </p>
             <p>
               <small className="muted">{Math.floor(yt.info.duration / 60)}:{String(yt.info.duration % 60).padStart(2, "0")}{yt.info.tooLong ? " · too long for the server (max 2 hours)" : ""}</small>{" "}

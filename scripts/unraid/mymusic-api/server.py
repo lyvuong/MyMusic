@@ -434,6 +434,9 @@ NOISE_BRACKET = re.compile(r"\s*[\(\[【][^\)\]】]*\b(?:%s)\b[^\)\]】]*[\)\]�
 NOISE_TAIL = re.compile(r"\s*[-|–—]\s*(?:%s)\b.*$" % NOISE, re.I)
 
 
+AI_HINT = re.compile(r"\b(suno|udio|ai[ -]?generated|generated (?:by|with|using) ai|(?:made|created|produced|composed) (?:by|with|using) ai|ai (?:music|song|cover|vocals?))\b", re.I)
+
+
 def tidy_title(title, artist=""):
     """Drops "(Official Video)", "[4K Remaster]", "| Lyrics" noise, a leading "Artist - ", and anything after a second
     " - " ("Artist - Song - Playlist name - Channel" becomes "Song")."""
@@ -481,6 +484,7 @@ def yt_info(url):
         "duration": duration,
         "thumbnail": d.get("thumbnail") if isinstance(d.get("thumbnail"), str) else None,
         "tooLong": duration > YT_MAX_SECONDS,
+        "aiHint": bool(AI_HINT.search(" ".join([str(d.get("title") or ""), str(d.get("description") or "")[:3000], " ".join(str(x) for x in (d.get("tags") or []))]))),
     }
 
 

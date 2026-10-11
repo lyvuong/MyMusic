@@ -20,6 +20,9 @@ const hue = (s: string) => {
 };
 
 /** Cover art for a track or album; falls back to a colour block with a note when there is no image. */
+/** Small pill marking a song made by AI. */
+export const AiBadge = () => <span className="ai-badge" title="Made by AI">AI</span>;
+
 export function Cover({ track, seed, className = "" }: { track?: Track | null; seed: string; className?: string }) {
   const url = useMediaUrl("art", track?.hasArt ? track.id : null, track?.updatedAt);
   const [failed, setFailed] = useState(false);

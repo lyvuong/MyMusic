@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Track } from "../shared/types";
-import { ArtistPic, Cover } from "./art";
+import { AiBadge, ArtistPic, Cover } from "./art";
 import { usePlayer } from "./player";
 
 export interface Album {
@@ -56,7 +56,7 @@ export function AlbumCard({ album, onOpen }: { album: Album; onOpen: () => void 
   return (
     <button className="tile" onClick={onOpen}>
       <Cover track={album.art} seed={album.name} />
-      <strong>{album.name}</strong>
+      <strong>{album.name}{album.tracks.every((t) => t.ai) && <> <AiBadge /></>}</strong>
       <small>{album.artist || songCount(album.tracks.length)}</small>
     </button>
   );

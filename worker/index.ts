@@ -165,9 +165,10 @@ app.post("/api/upload", async (c) => {
 
 /** Edits a song's title, artist, album and/or track number. */
 app.patch("/api/tracks/:id", async (c) => {
-  const b = await c.req.json<{ title?: unknown; artist?: unknown; album?: unknown; trackNo?: unknown }>().catch(() => null);
+  const b = await c.req.json<{ title?: unknown; artist?: unknown; album?: unknown; trackNo?: unknown; ai?: unknown }>().catch(() => null);
   if (!b) return c.json({ error: "bad request" }, 400);
-  const edit: { title?: string; artist?: string; album?: string; trackNo?: number } = {};
+  const edit: { title?: string; artist?: string; album?: string; trackNo?: number; ai?: boolean } = {};
+  if (typeof b.ai === "boolean") edit.ai = b.ai;
   if (b.title !== undefined) {
     edit.title = cleanName(b.title);
     if (!edit.title) return c.json({ error: "title cannot be empty" }, 400);
@@ -434,7 +435,7 @@ app.post("/api/beets/youtube/info", async (c) => {
 app.post("/api/beets/youtube", async (c) => {
   const denied = youtubeOwner(c);
   if (denied) return denied;
-  const b = await c.req.json<{ url?: string; title?: string; artist?: string; album?: string }>().catch(() => ({}) as Record<string, undefined>);
+  const b = await c.req.json<{ url?: string; title?: string; artist?: string; album?: string; ai?: boolean }>().catch(() => ({}) as Record<string, undefined>);
   const url = typeof b.url === "string" ? b.url.trim() : "";
   const title = typeof b.title === "string" ? b.title.trim().slice(0, 200) : "";
   const artist = typeof b.artist === "string" ? b.artist.trim().slice(0, 200) : "";
@@ -461,6 +462,11 @@ app.post("/api/beets/youtube", async (c) => {
       cover.cover = btoa(bin);
     }
     await homeStartJob(c.env, run.id, "youtube", { url, title, artist, album, ...cover });
+    // The song reaches the library with the next NAS sync; the badge is applied then (worker/nas.ts).
+    if (b.ai === true) {
+      await c.env.DB.prepare("INSERT INTO pending_ai (family_id, title, artist, created_at) VALUES (?, ?, ?, ?)")
+        .bind(fam, title.normalize("NFC"), artist.normalize("NFC"), Date.now()).run();
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not start the job";
     await failRun(c.env.DB, run.id, msg);

@@ -74,6 +74,17 @@ export async function syncPage(env: Env, familyId: string, offset: number, run: 
       "UPDATE tracks SET deleted = 1, art_key = NULL, updated_at = ? WHERE family_id = ? AND source = 'nas' AND deleted = 0 AND (sync_seen IS NULL OR sync_seen != ?)",
     ).bind(now, familyId, run).run();
     removed = gone.meta.changes ?? 0;
+    // Songs added from YouTube as AI-generated get their badge now that they are in the library.
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE tracks SET ai = 1, updated_at = ? WHERE family_id = ? AND deleted = 0 AND ai = 0 AND EXISTS " +
+          "(SELECT 1 FROM pending_ai p WHERE p.family_id = tracks.family_id AND p.title = tracks.title AND p.artist = tracks.artist)",
+      ).bind(now, familyId),
+      env.DB.prepare(
+        "DELETE FROM pending_ai WHERE family_id = ? AND (created_at < ? OR EXISTS " +
+          "(SELECT 1 FROM tracks t WHERE t.family_id = pending_ai.family_id AND t.deleted = 0 AND t.ai = 1 AND t.title = pending_ai.title AND t.artist = pending_ai.artist))",
+      ).bind(familyId, now - 3 * 86400 * 1000),
+    ]);
   }
   return { imported: songs.length, next: offset + songs.length, done, removed };
 }

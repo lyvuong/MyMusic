@@ -181,3 +181,6 @@ button.star:hover:not(:disabled) { background: none; color: var(--accent); }
 .modal .hint { margin: 0; font-size: .9rem; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .cast-note { color: var(--accent); font-size: .8rem; }
+.ai-badge { display: inline-block; margin-left: 4px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); font-size: .68rem; font-weight: 700; letter-spacing: .04em; line-height: 1.5; vertical-align: middle; }
+.modal .field.check { flex-direction: row; align-items: center; gap: 8px; }
+.modal .field.check input { width: auto; }

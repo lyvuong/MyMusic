@@ -12,6 +12,8 @@ export interface Track {
   mime: string;
   updatedAt: number;
   deleted: boolean;
+  /** Made by AI (shown with a badge). */
+  ai: boolean;
 }
 
 export interface Playlist {
@@ -70,6 +72,8 @@ export interface YoutubeInfo {
   thumbnail: string | null;
   /** Longer than the server accepts. */
   tooLong: boolean;
+  /** The video's description or tags suggest AI-generated music (Suno, Udio, "AI generated"). */
+  aiHint: boolean;
 }
 
 /** Whether the home server API (imports, enrich, writing names into files) can be reached. */
