@@ -415,7 +415,7 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
     const back = () => setOpen(null);
     const list = detailAlbum?.tracks ?? detailArtist!.tracks;
     return (
-      <>
+      <div className="wide">
         {detailAlbum ? (
           <Hero cover={<Cover track={detailAlbum.art} seed={detailAlbum.name} className="lg" />} title={detailAlbum.name} subtitle={detailAlbum.artist} tracks={list} onBack={back}
             actions={
@@ -449,14 +449,14 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
               extra={selecting ? undefined : rowExtra(t)} select={rowSelect(t)} />
           ))}
         </ul>
-      </>
+      </div>
     );
   }
 
   const views: [View, string][] = [["albums", "Albums"], ["artists", "Artists"], ["songs", "Songs"]];
   const noMatch = `Nothing matches "${dq.trim()}". Words can be in any order, and accents and capitals do not matter.`;
   return (
-    <div className={view === "songs" ? undefined : "wide"}>
+    <div className="wide">
       {dialog}
       {toastEl}
       <div className="search-box" aria-busy={q !== dq}>
