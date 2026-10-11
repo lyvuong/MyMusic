@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { signedQuery, verifySigned } from "./cast";
 import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
-import { findAlbumArt, findArtistImage } from "./artwork";
+import { findAlbumArt, findArtistImage, findSongArt } from "./artwork";
 import { cleanName, delta, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, failRun, finishRun, listRuns, startEnrich, updateProgress } from "./beets";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
@@ -451,7 +451,16 @@ app.post("/api/beets/youtube", async (c) => {
     ({ run, created } = await beginRun(c.env.DB, fam, uid, "youtube"));
   }
   try {
-    await homeStartJob(c.env, run.id, "youtube", { url, title, artist, album });
+    // A real cover when iTunes knows this song (artist and title must match); otherwise the server crops the video's thumbnail.
+    const art = await findSongArt(artist, title).catch(() => null);
+    const cover: Record<string, string> = {};
+    if (art) {
+      const bytes = new Uint8Array(art.data);
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      cover.cover = btoa(bin);
+    }
+    await homeStartJob(c.env, run.id, "youtube", { url, title, artist, album, ...cover });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not start the job";
     await failRun(c.env.DB, run.id, msg);

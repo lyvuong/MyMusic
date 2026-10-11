@@ -17,6 +17,7 @@ Needs: the docker CLI and /var/run/docker.sock (it runs `docker exec beets ...`)
 files) and the host's /tmp (to share /tmp/beets-import.lock with beets-enrich.sh). See "Beets runs from the web app"
 in the README for the compose entry.
 """
+import base64
 import fcntl
 import hmac
 import json
@@ -427,6 +428,23 @@ def clean_tag(value, limit=200):
     return re.sub(r"\s+", " ", s).strip()[:limit]
 
 
+# Words that mark bracketed or trailing "(Official Video)"-style noise in an upload's title.
+NOISE = r"official|video|audio|mv|m/v|lyrics?|lyric video|hd|hq|4k|8k|1080p|remaster(?:ed)?|visuali[sz]er|music video"
+NOISE_BRACKET = re.compile(r"\s*[\(\[【][^\)\]】]*\b(?:%s)\b[^\)\]】]*[\)\]】]" % NOISE, re.I)
+NOISE_TAIL = re.compile(r"\s*[-|–—]\s*(?:%s)\b.*$" % NOISE, re.I)
+
+
+def tidy_title(title, artist=""):
+    """Drops "(Official Video)", "[4K Remaster]", "| Lyrics" noise, a leading "Artist - ", and anything after a second
+    " - " ("Artist - Song - Playlist name - Channel" becomes "Song")."""
+    t = NOISE_BRACKET.sub("", title)
+    t = NOISE_TAIL.sub("", t)
+    t = re.sub(r"\s+", " ", t).strip(" -|")
+    if artist and t.lower().startswith(artist.lower() + " - "):
+        t = t[len(artist) + 3:]
+    return t.split(" - ")[0].strip() or title
+
+
 def yt_info(url):
     """Asks yt-dlp about one video without downloading it. Returns (status, body)."""
     try:
@@ -450,10 +468,11 @@ def yt_info(url):
     title = clean_tag(d.get("track") or d.get("title"))
     artist = clean_tag(d.get("artist") or d.get("creator") or "")
     if not artist and " - " in title:  # "Artist - Title" is the usual shape of a music upload's title
-        artist, title = (clean_tag(x) for x in title.split(" - ", 1))
+        artist, title = (clean_tag(x) for x in re.sub(r"\s+", " ", NOISE_BRACKET.sub("", title)).split(" - ", 1))
     if not artist:
         artist = clean_tag(d.get("uploader") or d.get("channel") or "")
     artist = re.sub(r"\s*-\s*Topic$", "", artist)
+    title = tidy_title(title, artist)
     duration = int(d.get("duration") or 0)
     return 200, {
         "title": title,
@@ -469,6 +488,37 @@ def mp3s_in(folder):
     r = subprocess.run(DOCKER + ["exec", YTDLP, "find", folder, "-type", "f", "-name", "*.mp3"],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     return r.stdout.split()
+
+
+def embed_cover(folder, cover):
+    """Embeds a square cover in the downloaded mp3: the real cover the Worker found, else the video's thumbnail cropped to
+    a square. Never fails the import: without a cover the song is simply added as it is. Returns a log line."""
+    exec_ = DOCKER + ["exec", YTDLP]
+    what = "the cover found online"
+    try:
+        mp3 = mp3s_in(folder)[0]
+        src = folder + "/cover_src.jpg"
+        if cover:
+            subprocess.run(DOCKER + ["exec", "-i", YTDLP, "sh", "-c", 'cat > "$0"', src], input=cover, capture_output=True, timeout=60, check=True)
+        else:
+            what = "the video thumbnail, cropped square"
+            thumbs = subprocess.run(exec_ + ["find", folder, "-type", "f", "-name", "*.jpg"], capture_output=True, text=True).stdout.split()
+            if not thumbs:
+                return "No cover available.\n"
+            src = thumbs[0]
+        out = mp3 + ".cover.mp3"
+        r = subprocess.run(
+            exec_ + ["ffmpeg", "-y", "-loglevel", "error", "-i", mp3, "-i", src, "-map", "0:a", "-map", "1:v", "-c:a", "copy",
+                     "-c:v", "mjpeg", "-vf", "crop='min(iw,ih)':'min(iw,ih)',scale=600:600", "-id3v2_version", "3",
+                     "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)", out],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+        )
+        if r.returncode:
+            return "Could not embed a cover: %s\n" % (r.stderr.strip().splitlines() or ["ffmpeg failed"])[-1][:200]
+        subprocess.run(exec_ + ["mv", "-f", out, mp3], capture_output=True, check=True)
+        return "Cover embedded (%s).\n" % what
+    except (subprocess.SubprocessError, OSError, IndexError) as e:
+        return "Could not embed a cover: %s\n" % e
 
 
 def run_youtube(run_id, payload):
@@ -487,7 +537,7 @@ def run_youtube(run_id, payload):
             worker_post("/api/beets/agent/progress", {"id": run_id, "before": steps, "now": steps})
             r = subprocess.run(
                 DOCKER + ["exec", YTDLP, "yt-dlp"] + YTDLP_ARGS + ["-x", "--audio-format", "mp3", "--audio-quality", "0", "--no-playlist",
-                          "--embed-thumbnail", "--convert-thumbnails", "jpg", "--no-warnings",
+                          "--write-thumbnail", "--convert-thumbnails", "jpg", "--no-warnings",
                           "--match-filter", "duration<=%d" % YT_MAX_SECONDS, "--postprocessor-args", pp_args,
                           "-o", folder + "/%(id)s.%(ext)s", "--", payload["url"]],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800,
@@ -497,6 +547,7 @@ def run_youtube(run_id, payload):
                 lines.append("Download failed (is the video longer than %d minutes, private, or blocked?).\n" % (YT_MAX_SECONDS // 60))
                 exit_code = r.returncode or 1
             else:
+                lines.append(embed_cover(folder, payload.get("cover")))
                 worker_post("/api/beets/agent/progress", {"id": run_id, "before": steps, "now": steps - 1})
                 r = subprocess.run(
                     DOCKER + ["exec", BEETS, "beet", "-p", "fromfilename", "import", "-A", "-s", "-q", folder],
@@ -677,7 +728,15 @@ class Handler(BaseHTTPRequestHandler):
                 title, artist, album = clean_tag(b.get("title")), clean_tag(b.get("artist")), clean_tag(b.get("album"))
                 if not url or not title or not artist:
                     return self.send(400, {"error": "a YouTube video link, a title and an artist are required"})
-                payload = {"url": url, "title": title, "artist": artist, "album": album}
+                cover = None
+                if isinstance(b.get("cover"), str) and b["cover"]:
+                    try:
+                        raw = base64.b64decode(b["cover"], validate=True)
+                    except ValueError:
+                        raw = b""
+                    if 0 < len(raw) <= 3_000_000 and (raw[:3] == b"\xff\xd8\xff" or raw[:4] == b"\x89PNG"):
+                        cover = raw
+                payload = {"url": url, "title": title, "artist": artist, "album": album, "cover": cover}
             ok, why = start_job(kind, run_id, payload)
             return self.send(202, {"id": run_id}) if ok else self.send(409, {"error": why})
         self.send(404, {"error": "not found"})

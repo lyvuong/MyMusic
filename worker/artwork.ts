@@ -41,6 +41,17 @@ export async function findAlbumArt(artist: string, album: string, title: string)
   return hit?.artworkUrl100 ? getImage(hit.artworkUrl100.replace(/\/\d+x\d+bb\./, "/600x600bb.")) : null;
 }
 
+/** Cover of a single song (its album's art on iTunes), or null. Both the artist and the song title must roughly match, so
+ *  a different song of the same artist never gives the wrong cover. */
+export async function findSongArt(artist: string, title: string): Promise<Image | null> {
+  if (!artist || !title) return null;
+  const r = await getJson<{ results?: { artistName: string; trackName?: string; artworkUrl100?: string }[] }>(
+    `https://itunes.apple.com/search?term=${encodeURIComponent(`${artist} ${title}`)}&entity=song&limit=10`,
+  );
+  const hit = best(r?.results, (x) => x.artistName, artist, (x) => !!x.artworkUrl100 && similar(x.trackName ?? "", title));
+  return hit?.artworkUrl100 ? getImage(hit.artworkUrl100.replace(/\/\d+x\d+bb\./, "/600x600bb.")) : null;
+}
+
 /** Artist picture, or null. */
 export async function findArtistImage(name: string): Promise<Image | null> {
   if (!name) return null;
