@@ -4,7 +4,8 @@
 The Worker (Cloudflare) calls this through a Cloudflare Tunnel; nothing here polls. Every request needs the shared key
 in the X-Agent-Key header. Endpoints (fixed; no paths or commands ever come from a request):
 
-  GET  /health   -> {"ok": true, "busy": null | "import" | "enrich" | "youtube"}   checks that the beets container answers
+  GET  /health   -> {"ok": true, "busy": null | "import" | "enrich" | "youtube", "jobs": [{kind, id}], "waiting": files in the inbox}
+                 checks that the beets container answers
   POST /edit     {"ops": [...]}  writes edited names into the files and the Beets library, waits for the result
   POST /cover    {"album": "...", "image": "<base64 jpeg>"}  writes cover.jpg into the folders of that album (embeds it when a folder is shared)
   POST /jobs     {"id": "...", "kind": "import" | "enrich"}  starts a long job and returns at once (202); progress and the
@@ -18,14 +19,19 @@ files) and the host's /tmp (to share /tmp/beets-import.lock with beets-enrich.sh
 in the README for the compose entry.
 
 The code is split by job: config (settings), locks (library lock + one job at a time), reporting (back to the Worker),
-jobs/ (import, enrich, youtube), edit (name and cover edits), http_handler (routing). Copy the whole folder to the server.
+jobs/ (import, enrich, youtube), watcher (imports by itself when files arrive), edit (name and cover edits),
+http_handler (routing). Copy the whole folder to the server.
 """
 import os
+import threading
 from http.server import ThreadingHTTPServer
 
 import config
+import reporting
+import watcher
 from http_handler import Handler
-from jobs.importer import count_inbox
+from jobs.importer import count_inbox, recover_staging
+from jobs.youtube import clear_leftovers
 from util import log
 
 
@@ -35,6 +41,11 @@ def main():
         log("WARNING: %s does not exist; mount the inbox (see README) or the progress bar will stay empty" % config.INBOX)
     else:
         log("inbox %s holds %d file(s)" % (config.INBOX, count_inbox()))
+    recover_staging()
+    clear_leftovers()
+    # Runs the Worker still lists as running died with the previous process: close them so queued YouTube links go on.
+    threading.Thread(target=reporting.worker_post, args=("/api/beets/agent/reset",), kwargs={"tries": 3}, daemon=True).start()
+    watcher.start()
     ThreadingHTTPServer(("0.0.0.0", config.PORT), Handler).serve_forever()
 
 

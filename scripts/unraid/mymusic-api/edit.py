@@ -208,16 +208,72 @@ sys.exit(1 if failed else 0)
 LAUNCH = 'PYBIN=$(head -n1 "$(command -v beet)" | sed "s/^#!//"); exec $PYBIN -c "$0"'
 
 
+# Decides, for files an import skipped as duplicates, which really are the same song as one already in the library:
+# same title and artist (from the tags, else an "Artist - Title" file name) and a length within 3 seconds. A file that
+# cannot be confirmed (no names, unreadable, a different length such as a remix) is reported as not a duplicate.
+CONFIRM_PY = COMMON_PY + r"""
+try:
+    from mediafile import MediaFile
+except ImportError:  # older Beets
+    from beets.mediafile import MediaFile
+paths = json.load(sys.stdin)
+index = {}   # (title, artist) lower-cased -> lengths of the library songs with those names
+for it in lib.items():
+    index.setdefault((nfc(it.title).lower(), nfc(it.artist).lower()), []).append(it.length or 0)
+out = []
+for p in paths:
+    try:
+        mf = MediaFile(os.fsencode(p))
+        title, artist, length = nfc(mf.title), nfc(mf.artist or mf.albumartist), float(mf.length or 0)
+    except Exception as e:
+        out.append({"path": p, "dup": False, "why": "unreadable: %s" % e})
+        continue
+    if not title:
+        stem = os.path.splitext(os.path.basename(p))[0]
+        if " - " in stem:
+            artist, title = (nfc(x) for x in stem.split(" - ", 1))
+    if not title:
+        out.append({"path": p, "dup": False, "why": "no title to compare"})
+        continue
+    lengths = index.get((title.lower(), artist.lower()), [])
+    if not lengths:
+        out.append({"path": p, "dup": False, "why": "no song with these names in the library"})
+    elif any(abs(l - length) <= 3.0 for l in lengths):
+        out.append({"path": p, "dup": True, "why": "same names and length as a song in the library"})
+    else:
+        out.append({"path": p, "dup": False, "why": "same names but a different length (%.0fs; the library has %s)" % (length, ", ".join("%.0fs" % l for l in lengths))})
+print("RESULT " + json.dumps(out))
+"""
+
+
+def run_in_beets(script, payload, timeout):
+    """Runs a script with the interpreter of the beets container, the payload as JSON on stdin. Takes no lock: the caller
+    holds the library lock when it needs one. Returns the CompletedProcess."""
+    return subprocess.run(
+        config.DOCKER + ["exec", "-i", config.BEETS, "sh", "-c", LAUNCH, script],
+        input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+    )
+
+
+def result_line(text):
+    """The JSON after the last 'RESULT ' line of a script's output, or None."""
+    result = None
+    for line in text.splitlines():
+        if line.startswith("RESULT "):
+            try:
+                result = json.loads(line[7:])
+            except ValueError:
+                pass
+    return result
+
+
 def do_edit(payload, script=None, what="edit"):
     """Runs an edit script in the beets container with the payload as JSON on stdin. Returns (status, body)."""
     script = script or EDIT_PY
     try:
         with beets_lock(10):
             try:
-                p = subprocess.run(
-                    config.DOCKER + ["exec", "-i", config.BEETS, "sh", "-c", LAUNCH, script],
-                    input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=config.EDIT_TIMEOUT,
-                )
+                p = run_in_beets(script, payload, config.EDIT_TIMEOUT)
             except subprocess.TimeoutExpired:
                 return 504, {"error": "The %s took too long and was stopped. Some files may have changed; try again." % what}
             except OSError as e:
@@ -226,13 +282,7 @@ def do_edit(payload, script=None, what="edit"):
         return 503, {"error": "Cannot %s right now: %s. Try again when it finishes." % (what, e)}
     text = p.stdout + p.stderr
     append_file(os.path.join(config.APPDATA, "tag-edits.log"), "=== %s ===\n%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
-    result = None
-    for line in text.splitlines():
-        if line.startswith("RESULT "):
-            try:
-                result = json.loads(line[7:])
-            except ValueError:
-                pass
+    result = result_line(text)
     if result is None:
         return 500, {"error": "The %s failed: " % what + (text.strip().splitlines() or ["no output"])[-1][:300]}
     if p.returncode != 0 or result.get("failed"):

@@ -14,5 +14,10 @@ LOCK_PATH = os.environ.get("LOCK_PATH", "/host-tmp/beets-import.lock")
 APPDATA = os.environ.get("BEETS_APPDATA", "/beets-appdata")
 PORT = int(os.environ.get("PORT", "8099"))
 EDIT_TIMEOUT = 85  # seconds; the Worker gives up at 95 and a Cloudflare Tunnel request at 100
+MAX_YT = max(1, int(os.environ.get("MAX_YT", "3")))  # YouTube downloads running at the same time
+AUTO_IMPORT = os.environ.get("AUTO_IMPORT", "") in ("1", "true", "yes")  # watch the inbox and import by itself
+AUTO_IMPORT_DEBOUNCE = float(os.environ.get("AUTO_IMPORT_DEBOUNCE", "20"))  # seconds an entry must be quiet before it is imported
+
+VERSION = os.environ.get("MYMUSIC_API_VERSION", "dev")  # the git commit of the image, baked in by CI
 
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")

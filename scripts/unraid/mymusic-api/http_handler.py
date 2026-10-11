@@ -9,7 +9,8 @@ import config
 from edit import COVER_PY, do_edit
 from jobs import JOBS
 from jobs.youtube import clean_tag, clean_url, yt_info
-from locks import busy_kind, start_job
+from jobs.importer import count_inbox
+from locks import active_jobs, busy_kind, start_job
 from util import log
 
 
@@ -20,7 +21,7 @@ def health():
         return 503, {"error": "Cannot run docker: %s" % e}
     if r.returncode != 0:
         return 503, {"error": "The '%s' container is not running." % config.BEETS}
-    return 200, {"ok": True, "busy": busy_kind()}
+    return 200, {"ok": True, "busy": busy_kind(), "jobs": active_jobs(), "waiting": count_inbox(), "autoImport": config.AUTO_IMPORT, "version": config.VERSION}
 
 
 class Handler(BaseHTTPRequestHandler):

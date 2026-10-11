@@ -180,8 +180,10 @@ def embed_cover(folder, cover):
 
 def run_youtube(run_id, payload):
     """Downloads one video's audio as mp3 into a private inbox sub-folder, tags it as the owner confirmed and imports it
-    into Beets as it is (no MusicBrainz matching, so the names stay exactly as typed). Holds the Beets lock throughout,
-    so an Organize or the nightly enrich never touches the half-written file."""
+    into Beets as it is (no MusicBrainz matching, so the names stay exactly as typed). Several of these run at once: the
+    download, tagging and cover work only touch this run's folder. Only the last step, the Beets import, takes the
+    library lock (it writes the library database), so it waits for a running Organize or enrich, and the other way round.
+    Organize never looks into _youtube, so it cannot pick up a half-written file."""
     title, artist, album = payload["title"], payload["artist"], payload["album"]
     folder = "/downloads/_youtube/%s" % run_id
     lines = ["YouTube import: %s - %s%s\n" % (artist, title, " [%s]" % album if album else "")]
@@ -190,35 +192,34 @@ def run_youtube(run_id, payload):
     pp_args = "ffmpeg:" + " ".join("-metadata " + shlex.quote(m) for m in meta)
     steps = 2  # progress for the app: before = number of steps, now = steps still to do
     try:
-        with beets_lock(3600):
-            worker_post("/api/beets/agent/progress", {"id": run_id, "before": steps, "now": steps})
-            r = subprocess.run(
-                config.DOCKER + ["exec", config.YTDLP, "yt-dlp"] + config.YTDLP_ARGS + ["-x", "--audio-format", "mp3", "--audio-quality", "0", "--no-playlist",
-                          "--write-thumbnail", "--convert-thumbnails", "jpg", "--no-warnings",
-                          "--match-filter", "duration<=%d" % YT_MAX_SECONDS, "--postprocessor-args", pp_args,
-                          "-o", folder + "/%(id)s.%(ext)s", "--", payload["url"]],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800,
-            )
-            lines.append(r.stdout[-2000:] + r.stderr[-2000:])
-            if r.returncode or not mp3s_in(folder):
-                lines.append("Download failed (is the video longer than %d minutes, private, or blocked?).\n" % (YT_MAX_SECONDS // 60))
-                exit_code = r.returncode or 1
-            else:
-                lines.append(embed_cover(folder, payload.get("cover")))
-                worker_post("/api/beets/agent/progress", {"id": run_id, "before": steps, "now": steps - 1})
+        worker_post("/api/beets/agent/progress", {"id": run_id, "before": steps, "now": steps})
+        r = subprocess.run(
+            config.DOCKER + ["exec", config.YTDLP, "yt-dlp"] + config.YTDLP_ARGS + ["-x", "--audio-format", "mp3", "--audio-quality", "0", "--no-playlist",
+                      "--write-thumbnail", "--convert-thumbnails", "jpg", "--no-warnings",
+                      "--match-filter", "duration<=%d" % YT_MAX_SECONDS, "--postprocessor-args", pp_args,
+                      "-o", folder + "/%(id)s.%(ext)s", "--", payload["url"]],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800,
+        )
+        lines.append(r.stdout[-2000:] + r.stderr[-2000:])
+        if r.returncode or not mp3s_in(folder):
+            lines.append("Download failed (is the video longer than %d minutes, private, or blocked?).\n" % (YT_MAX_SECONDS // 60))
+            exit_code = r.returncode or 1
+        else:
+            lines.append(embed_cover(folder, payload.get("cover")))
+            worker_post("/api/beets/agent/progress", {"id": run_id, "before": steps, "now": steps - 1})
+            with beets_lock(3600):
                 r = subprocess.run(
                     config.DOCKER + ["exec", config.BEETS, "beet", "-p", "fromfilename", "import", "-A", "-s", "-q", folder],
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
                 )
-                lines.append(r.stdout[-2000:] + r.stderr[-2000:])
-                if r.returncode:
-                    exit_code = r.returncode
-                elif mp3s_in(folder):
-                    lines.append("Beets skipped the file (a song with these tags is probably already in the library).\n")
-                    exit_code = 1
-                else:
-                    lines.append("Imported.\n")
-            subprocess.run(config.DOCKER + ["exec", config.YTDLP, "rm", "-rf", folder], capture_output=True)
+            lines.append(r.stdout[-2000:] + r.stderr[-2000:])
+            if r.returncode:
+                exit_code = r.returncode
+            elif mp3s_in(folder):
+                lines.append("Beets skipped the file (a song with these tags is probably already in the library).\n")
+                exit_code = 1
+            else:
+                lines.append("Imported.\n")
     except TimeoutError as e:
         lines.append("Gave up: %s\n" % e)
         exit_code = 1
@@ -228,6 +229,23 @@ def run_youtube(run_id, payload):
     except Exception as e:
         lines.append("YouTube import failed: %s\n" % e)
         exit_code = 1
+    finally:
+        subprocess.run(config.DOCKER + ["exec", config.YTDLP, "rm", "-rf", folder], capture_output=True)
     text = "".join(lines)
     append_file(os.path.join(config.APPDATA, "auto-import.log"), "=== %s youtube ===\n%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
     report(run_id, exit_code == 0, exit_code, text)
+
+
+def clear_leftovers():
+    """At startup: downloads of runs that died with the previous process are no use to anyone."""
+    root = os.path.join(config.INBOX, "_youtube")
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return
+    for name in names:
+        log("removing the unfinished download %s" % name)
+        try:
+            subprocess.run(config.DOCKER + ["exec", config.YTDLP, "rm", "-rf", "/downloads/_youtube/" + name], capture_output=True, timeout=60)
+        except (subprocess.SubprocessError, OSError) as e:
+            log("could not remove %s: %s" % (name, e))

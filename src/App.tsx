@@ -733,7 +733,12 @@ const when = (t: number) => new Date(t).toLocaleString();
 const ENRICH_STEPS = ["Fetching missing cover art", "Embedding covers into the files", "Looking up genres"];
 const YOUTUBE_STEPS = ["Downloading the audio", "Adding it to the library"];
 
-/** Owner tool: run Beets on the home server, then scan Navidrome and sync the library, showing the result. */
+const isOpen = (r: BeetsRun) => r.status === "requested" || r.status === "running";
+
+/**
+ * Owner tool: Beets runs on the home server (Organize, enrich, YouTube links, and imports that start by themselves when
+ * files land in the inbox). The page follows every open run, then scans Navidrome and syncs the library.
+ */
 interface OrganizeState { busy: boolean; msg: string; runs: BeetsRun[]; active: BeetsRun | null }
 let organizeState: OrganizeState = { busy: false, msg: "", runs: [], active: null };
 const organizeSubs = new Set<() => void>();
@@ -754,41 +759,79 @@ async function refreshRuns() {
   }
 }
 
+let tracking = false;
+let lastSyncAt = 0;
+
 /**
- * Follows a Beets run to the end, then scans Navidrome and syncs the library. It lives outside the component so it keeps
- * going when you leave the Family tab, and the tab picks it up again when you come back.
+ * Follows the open Beets runs until none is left (any number of YouTube songs, and one import or enrich), and scans
+ * Navidrome and syncs the library after runs finish: at once when everything is done, at most once a minute while
+ * more keep coming. It lives outside the component so it keeps going when you leave the Family tab, and the tab picks
+ * it up again when you come back. `first` are runs the caller has just started, so one that ends before the first
+ * look is still noticed.
  */
-async function followRun(first: BeetsRun, syncNas: () => Promise<boolean>) {
-  if (organizeState.busy) return;
-  setOrganize({ busy: true });
+async function track(syncNas: () => Promise<boolean>, first: string[] = []) {
+  if (tracking) return;
+  tracking = true;
+  const seen = new Set<string>(first);
+  let pendingSync = false;
+  let failed = "";
+  let doneMsg = "";
   try {
-    let run = first;
-    const deadline = Date.now() + 40 * 60 * 1000;
-    while (run.status === "requested" || run.status === "running") {
-      if (Date.now() > deadline) throw new Error("Gave up waiting for the server. Check the Unraid script.");
-      setOrganize({ msg: run.status === "requested" ? "Waiting for the server to pick it up (up to a minute)…" : run.kind === "enrich" ? "Beets is adding art and genres…" : run.kind === "youtube" ? "Adding the song from YouTube…" : "Beets is importing…", active: run });
+    const deadline = Date.now() + 3 * 3600 * 1000;
+    for (;;) {
+      if (Date.now() > deadline) throw new Error("Gave up waiting for the server.");
+      const { runs } = await api.beetsRuns();
+      const open = runs.filter(isOpen);
+      open.forEach((r) => seen.add(r.id));
+      for (const r of runs) {
+        if (!seen.has(r.id) || isOpen(r)) continue;
+        seen.delete(r.id);
+        if (r.status === "done") pendingSync = true;
+        else failed = r.kind === "youtube" ? `Could not add ${r.label ?? "a song"}. See the log below.` : "Beets failed. See the log below.";
+      }
+      const main = open.find((r) => r.kind !== "youtube") ?? null;
+      const songs = open.filter((r) => r.kind === "youtube").length;
+      setOrganize({
+        runs, active: main, busy: main !== null,
+        msg: [
+          main ? (main.status === "requested" ? "Waiting for the server…" : main.kind === "enrich" ? "Beets is adding art and genres…" : "Beets is importing…") : "",
+          songs ? `${songs} YouTube song${songs > 1 ? "s" : ""} in progress…` : "",
+        ].filter(Boolean).join(" ") || organizeState.msg,
+      });
+      if (pendingSync && (open.length === 0 || Date.now() - lastSyncAt > 60_000)) {
+        pendingSync = false;
+        setOrganize({ busy: true, msg: "Scanning Navidrome…" });
+        await api.scanNas();
+        await sleep(2000);
+        for (let i = 0; i < 200 && (await api.nasScanning()).scanning; i++) await sleep(3000);
+        setOrganize({ msg: "Syncing the library…" });
+        doneMsg = (await syncNas()) ? "Done: Beets ran, Navidrome scanned and the library synced." : "Beets ran, but the library sync failed.";
+        lastSyncAt = Date.now();
+        setOrganize({ msg: doneMsg });
+        continue;
+      }
+      if (open.length === 0 && !pendingSync) break;
       await sleep(3000);
-      const { runs: latest } = await api.beetsRuns();
-      setOrganize({ runs: latest });
-      const next = latest.find((r) => r.id === run.id);
-      if (!next) throw new Error("The run disappeared from the history.");
-      run = next;
-      setOrganize({ active: run });
     }
-    setOrganize({ active: null });
-    if (run.status === "failed") throw new Error(run.kind === "youtube" ? "Could not add the song. See the log below." : "Beets failed. See the log below.");
-    setOrganize({ msg: "Scanning Navidrome…" });
-    await api.scanNas();
-    await sleep(2000);
-    for (let i = 0; i < 200 && (await api.nasScanning()).scanning; i++) await sleep(3000);
-    setOrganize({ msg: "Syncing the library…" });
-    setOrganize({ msg: (await syncNas()) ? "Done: Beets ran, Navidrome scanned and the library synced." : "Beets ran, but the library sync failed." });
+    if (failed) setOrganize({ msg: failed });
   } catch (e) {
     setOrganize({ msg: e instanceof Error ? e.message : "Failed" });
   } finally {
+    tracking = false;
     setOrganize({ busy: false, active: null });
     await refreshRuns();
   }
+}
+
+/** One YouTube link in the "add songs" list: what the server read from it, and the names to use. */
+interface YtRow {
+  url: string;
+  info: YoutubeInfo | null;
+  error: string;
+  title: string;
+  artist: string;
+  album: string;
+  ai: boolean;
 }
 
 function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>; home: ServerStatus | null; recheck: () => Promise<void> }) {
@@ -797,18 +840,21 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
   const sync = useRef(syncNas);
   sync.current = syncNas;
 
-  // Coming back to the tab while a run is still going: show it and keep following it.
+  // Follow whatever is running (also imports the server started by itself): once now, then while the tab is open.
   useEffect(() => {
-    void (async () => {
+    const look = async () => {
       await refreshRuns();
-      const open = organizeState.runs.find((r) => (r.kind === "import" || r.kind === "youtube" || r.status === "requested") && (r.status === "requested" || r.status === "running"));
-      if (open) void followRun(open, () => sync.current());
-    })();
+      if (organizeState.runs.some(isOpen)) void track(() => sync.current());
+    };
+    void look();
+    const t = setInterval(() => void look(), 10_000);
+    return () => clearInterval(t);
   }, []);
 
   const organize = async () => {
     try {
-      await followRun(await api.runBeets(), () => sync.current());
+      const run = await api.runBeets();
+      void track(() => sync.current(), [run.id]);
     } catch (e) {
       setOrganize({ msg: e instanceof Error ? e.message : "Failed" });
     }
@@ -816,47 +862,68 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
 
   const enrich = async () => {
     try {
-      await followRun(await api.runEnrich(), () => sync.current());
+      const run = await api.runEnrich();
+      void track(() => sync.current(), [run.id]);
     } catch (e) {
       setOrganize({ msg: e instanceof Error ? e.message : "Failed" });
     }
   };
 
-  // Add one song from a YouTube link: look it up, confirm or edit its names, then the server downloads and imports it.
-  const [ytUrl, setYtUrl] = useState("");
-  const [yt, setYt] = useState<{ url: string; info: YoutubeInfo } | null>(null);
-  const [ytFields, setYtFields] = useState({ title: "", artist: "", album: "" });
-  const [ytAi, setYtAi] = useState(false);
+  // Add songs from YouTube links: paste one or more, look them up, confirm or edit the names, then the server
+  // downloads a few at a time and imports each. More links can be added while others are still going.
+  const [ytText, setYtText] = useState("");
+  const [ytRows, setYtRows] = useState<YtRow[]>([]);
   const [ytBusy, setYtBusy] = useState(false);
   const [ytErr, setYtErr] = useState("");
+  const patchRow = (url: string, patch: Partial<YtRow>) => setYtRows((rows) => rows.map((r) => (r.url === url ? { ...r, ...patch } : r)));
   const lookUp = async () => {
+    const urls = [...new Set(ytText.split(/\s+/).filter(Boolean))].slice(0, 20);
+    if (!urls.length) return;
     setYtBusy(true);
     setYtErr("");
-    try {
-      const url = ytUrl.trim();
-      const info = await api.youtubeInfo(url);
-      setYt({ url, info });
-      setYtFields({ title: info.title, artist: info.artist, album: info.album });
-      setYtAi(info.aiLabel || info.aiHint);
-    } catch (e) {
-      setYt(null);
-      setYtErr(e instanceof Error ? e.message : "Could not read that link");
-    } finally {
-      setYtBusy(false);
-    }
+    setYtRows(urls.map((url) => ({ url, info: null, error: "", title: "", artist: "", album: "", ai: false })));
+    const queue = [...urls];
+    const worker = async () => {
+      for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
+        try {
+          const info = await api.youtubeInfo(url);
+          patchRow(url, { info, title: info.title, artist: info.artist, album: info.album, ai: info.aiLabel || info.aiHint });
+        } catch (e) {
+          patchRow(url, { error: e instanceof Error ? e.message : "Could not read that link" });
+        }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    setYtBusy(false);
   };
-  const addFromYoutube = async () => {
-    if (!yt) return;
+  const usable = (r: YtRow) => r.info !== null && !r.info.tooLong && r.title.trim() !== "" && r.artist.trim() !== "";
+  const addAll = async () => {
+    setYtBusy(true);
     setYtErr("");
-    try {
-      const run = await api.importYoutube({ url: yt.url, ...ytFields, ai: ytAi });
-      setYt(null);
-      setYtUrl("");
-      await followRun(run, () => sync.current());
-    } catch (e) {
-      setYtErr(e instanceof Error ? e.message : "Failed");
+    const left: YtRow[] = [];
+    const started: string[] = [];
+    for (const r of ytRows) {
+      if (!usable(r)) {
+        left.push(r);
+        continue;
+      }
+      try {
+        const run = await api.importYoutube({ url: r.url, title: r.title, artist: r.artist, album: r.album, ai: r.ai });
+        started.push(run.id);
+      } catch (e) {
+        left.push({ ...r, error: e instanceof Error ? e.message : "Failed" });
+      }
+    }
+    setYtRows(left);
+    if (!left.length) setYtText("");
+    setYtBusy(false);
+    if (started.length) {
+      await refreshRuns();
+      void track(() => sync.current(), started);
     }
   };
+
+  const ytRuns = runs.filter((r) => r.kind === "youtube" && isOpen(r));
 
   return (
     <>
@@ -866,68 +933,111 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
         {busy && <span className="spinner" aria-hidden="true" />}
         <small className="muted" role="status">{msg}</small>
       </p>
+      {home?.ok && (home.autoImport || (home.waiting ?? 0) > 0) && (
+        <p>
+          <small className="muted">
+            {home.autoImport ? "Files added to the inbox are imported automatically." : ""}
+            {(home.waiting ?? 0) > 0 ? ` ${home.waiting} file${home.waiting === 1 ? "" : "s"} waiting in the inbox.` : ""}
+          </small>
+        </p>
+      )}
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (yt) void addFromYoutube();
-          else if (ytUrl.trim()) void lookUp();
+          if (ytRows.length && !ytBusy) void addAll();
+          else if (ytText.trim()) void lookUp();
         }}
       >
         <p>
-          <strong>Add a song from YouTube</strong>
+          <strong>Add songs from YouTube</strong>
         </p>
         <p>
-          <input
-            type="url"
-            value={ytUrl}
-            placeholder="Paste a YouTube link"
-            aria-label="YouTube link"
-            disabled={ytBusy || busy || down}
+          <textarea
+            value={ytText}
+            rows={2}
+            placeholder="Paste one or more YouTube links, one per line"
+            aria-label="YouTube links"
+            disabled={ytBusy || down}
             onChange={(e) => {
-              setYtUrl(e.target.value);
-              setYt(null);
+              setYtText(e.target.value);
+              setYtRows([]);
             }}
           />{" "}
-          {!yt && <button type="submit" disabled={ytBusy || busy || down || !ytUrl.trim()}>{ytBusy ? "Looking up…" : "Look up"}</button>}
+          {ytRows.length === 0 && <button type="submit" disabled={ytBusy || down || !ytText.trim()}>{ytBusy ? "Looking up…" : "Look up"}</button>}
         </p>
-        {yt && (
-          <>
-            <p>
-              <label>Title <input value={ytFields.title} onChange={(e) => setYtFields({ ...ytFields, title: e.target.value })} /></label>{" "}
-              <label>Artist <input value={ytFields.artist} onChange={(e) => setYtFields({ ...ytFields, artist: e.target.value })} /></label>{" "}
-              <label>Album (optional) <input value={ytFields.album} onChange={(e) => setYtFields({ ...ytFields, album: e.target.value })} /></label>
-            </p>
-            <p>
-              <label>
-                <input type="checkbox" checked={ytAi} onChange={(e) => setYtAi(e.target.checked)} /> Made by AI (shows a badge)
-                {yt.info.aiLabel
-                  ? <small className="muted"> · YouTube labels this video as made with AI</small>
-                  : yt.info.aiHint && <small className="muted"> · the video's description mentions AI</small>}
-              </label>
-            </p>
-            <p>
-              <small className="muted">{Math.floor(yt.info.duration / 60)}:{String(yt.info.duration % 60).padStart(2, "0")}{yt.info.tooLong ? " · too long for the server (max 2 hours)" : ""}</small>{" "}
-              <button type="submit" disabled={busy || down || yt.info.tooLong || !ytFields.title.trim() || !ytFields.artist.trim()}>Add to library</button>
-            </p>
-          </>
+        {ytRows.map((r) => (
+          <fieldset key={r.url}>
+            <legend><small className="muted">{r.url}</small></legend>
+            {r.error && <p className="error" role="alert">{r.error}</p>}
+            {!r.info && !r.error && <p><small className="muted">Looking up…</small></p>}
+            {r.info && (
+              <>
+                <p>
+                  <label>Title <input value={r.title} onChange={(e) => patchRow(r.url, { title: e.target.value })} /></label>{" "}
+                  <label>Artist <input value={r.artist} onChange={(e) => patchRow(r.url, { artist: e.target.value })} /></label>{" "}
+                  <label>Album (optional) <input value={r.album} onChange={(e) => patchRow(r.url, { album: e.target.value })} /></label>
+                </p>
+                <p>
+                  <label>
+                    <input type="checkbox" checked={r.ai} onChange={(e) => patchRow(r.url, { ai: e.target.checked })} /> Made by AI (shows a badge)
+                    {r.info.aiLabel
+                      ? <small className="muted"> · YouTube labels this video as made with AI</small>
+                      : r.info.aiHint && <small className="muted"> · the video's description mentions AI</small>}
+                  </label>{" "}
+                  <small className="muted">{Math.floor(r.info.duration / 60)}:{String(r.info.duration % 60).padStart(2, "0")}{r.info.tooLong ? " · too long for the server (max 2 hours)" : ""}</small>
+                </p>
+              </>
+            )}
+            <button type="button" className="link" onClick={() => setYtRows((rows) => rows.filter((x) => x.url !== r.url))}>Remove</button>
+          </fieldset>
+        ))}
+        {ytRows.length > 0 && (
+          <p>
+            <button type="submit" disabled={ytBusy || down || !ytRows.some(usable)}>
+              Add {ytRows.filter(usable).length > 1 ? `${ytRows.filter(usable).length} songs` : "to library"}
+            </button>
+          </p>
         )}
         {ytErr && <p className="error" role="alert">{ytErr}</p>}
       </form>
+      {ytRuns.length > 0 && (
+        <ul>
+          {ytRuns.map((r) => {
+            // The server reports before = number of steps and now = steps still to do.
+            const total = YOUTUBE_STEPS.length;
+            const done = Math.min(total, Math.max(0, (r.inboxBefore ?? total) - (r.inboxNow ?? total)));
+            return (
+              <li key={r.id}>
+                {r.label ?? "YouTube song"}:{" "}
+                {r.status === "requested"
+                  ? <small className="muted">waiting for a free download slot</small>
+                  : (
+                    <>
+                      <progress max={total} value={done} />{" "}
+                      <small className="muted">
+                        {r.inboxNow === null ? "starting…" : `step ${Math.min(total, done + 1)} of ${total}: ${YOUTUBE_STEPS[Math.min(total - 1, done)]}`}
+                      </small>
+                    </>
+                  )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {down && (
         <p className="error" role="alert">
           Home server unavailable: {home.error} <button className="link" onClick={() => void recheck()}>Check again</button>
         </p>
       )}
-      {active?.status === "running" && (active.kind === "enrich" || active.kind === "youtube") && (() => {
+      {active?.status === "running" && active.kind === "enrich" && (() => {
         // The server reports before = number of steps and now = steps still to do.
-        const steps = active.kind === "enrich" ? ENRICH_STEPS : YOUTUBE_STEPS;
-        const total = steps.length;
+        const total = ENRICH_STEPS.length;
         const done = Math.min(total, Math.max(0, (active.inboxBefore ?? total) - (active.inboxNow ?? total)));
         return (
           <p>
             <progress max={total} value={done} />{" "}
             <small className="muted">
-              {active.inboxNow === null ? "Waiting for the server to start…" : `Step ${Math.min(total, done + 1)} of ${total}: ${steps[Math.min(total - 1, done)]}`}
+              {active.inboxNow === null ? "Waiting for the server to start…" : `Step ${Math.min(total, done + 1)} of ${total}: ${ENRICH_STEPS[Math.min(total - 1, done)]}`}
             </small>
           </p>
         );
@@ -944,9 +1054,13 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
           <ul>
             {runs.map((r) => (
               <li key={r.id}>
-                <strong>{r.kind === "enrich" ? "Enrich (covers and genres)" : r.kind === "youtube" ? "YouTube import" : "Import"}: {r.status}</strong> <small className="muted">{when(r.requestedAt)}</small>
+                <strong>
+                  {r.kind === "enrich" ? "Enrich (covers and genres)" : r.kind === "youtube" ? `YouTube import${r.label ? ` (${r.label})` : ""}` : "Import"}
+                  : {r.status === "requested" ? "queued" : r.status}
+                </strong>{" "}
+                <small className="muted">{when(r.requestedAt)}</small>
                 {r.kind === "import" && r.inboxBefore !== null && r.inboxAfter !== null && (
-                  <small className="muted"> · inbox {r.inboxBefore} → {r.inboxAfter} files</small>
+                  <small className="muted"> · {r.inboxBefore} file{r.inboxBefore === 1 ? "" : "s"}, {r.inboxAfter} not imported</small>
                 )}
                 {r.log && (
                   <details>

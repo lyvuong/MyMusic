@@ -11,7 +11,10 @@ export type TagOp =
   | { kind: "album" | "artist"; from: string; to: string }
   | { kind: "song"; match: { title: string; artist: string; album: string; trackNo: number }; set: { title?: string; artist?: string; album?: string; trackNo?: number } };
 
-export class HomeError extends Error {}
+export class HomeError extends Error {
+  /** The HTTP status the home server answered, when it answered. */
+  status?: number;
+}
 
 export const homeConfigured = (env: Env) => !!(env.HOME_API_URL && env.BEETS_AGENT_KEY);
 
@@ -40,10 +43,11 @@ async function call<T>(env: Env, method: "GET" | "POST", path: string, body: unk
     /* not JSON (for example a Cloudflare error page) */
   }
   if (!res.ok) {
-    if (json.error) throw new HomeError(String(json.error));
-    if (res.status === 401 || res.status === 403) throw new HomeError(`The home server refused the request (${res.status}). Check the Cloudflare Access policy and the shared key.`);
-    if (res.status >= 520 || res.status === 502 || res.status === 504) throw new HomeError(`The home server is not responding (${res.status}). Is the mymusic-api container running?`);
-    throw new HomeError(`The home server answered ${res.status}.`);
+    const fail = (msg: string) => Object.assign(new HomeError(msg), { status: res.status });
+    if (json.error) throw fail(String(json.error));
+    if (res.status === 401 || res.status === 403) throw fail(`The home server refused the request (${res.status}). Check the Cloudflare Access policy and the shared key.`);
+    if (res.status >= 520 || res.status === 502 || res.status === 504) throw fail(`The home server is not responding (${res.status}). Is the mymusic-api container running?`);
+    throw fail(`The home server answered ${res.status}.`);
   }
   return json as T;
 }
@@ -54,8 +58,8 @@ export async function homeStatus(env: Env): Promise<ServerStatus> {
     return { configured: false, ok: false, error: "The home server API is not configured.", busy: null };
   }
   try {
-    const r = await call<{ busy?: string | null }>(env, "GET", "/health", undefined, 6000);
-    return { configured: true, ok: true, error: "", busy: r.busy ?? null };
+    const r = await call<{ busy?: string | null; jobs?: { kind: string; id: string }[]; waiting?: number; autoImport?: boolean }>(env, "GET", "/health", undefined, 6000);
+    return { configured: true, ok: true, error: "", busy: r.busy ?? null, jobs: r.jobs, waiting: r.waiting, autoImport: r.autoImport };
   } catch (e) {
     return { configured: true, ok: false, error: e instanceof Error ? e.message : String(e), busy: null };
   }

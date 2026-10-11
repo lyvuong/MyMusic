@@ -60,6 +60,8 @@ export interface BeetsRun {
   exitCode: number | null;
   /** The end of the import output. */
   log: string;
+  /** For a YouTube run: the song's "Artist – Title" as confirmed when it was added. */
+  label?: string | null;
 }
 
 /** What the home server read from a YouTube link, to be confirmed or edited before the audio is downloaded. */
@@ -86,4 +88,10 @@ export interface ServerStatus {
   error: string;
   /** The job running on the server right now, if any. */
   busy: string | null;
+  /** Every job running on the server (an import or enrich, and YouTube downloads), by run id. */
+  jobs?: { kind: string; id: string }[];
+  /** Files waiting in the inbox. */
+  waiting?: number;
+  /** The server imports what lands in the inbox by itself. */
+  autoImport?: boolean;
 }

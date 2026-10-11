@@ -3,9 +3,10 @@ import { cors } from "hono/cors";
 import { signedQuery, verifySigned } from "./cast";
 import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
-import { findAlbumArt, findArtistImage, findSongArt } from "./artwork";
+import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTrack, renameGroup, savePlaylist } from "./library";
-import { agentKeyOk, beginRun, failRun, finishRun, listRuns, startEnrich, updateProgress } from "./beets";
+import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
+import { dispatchQueued } from "./ytqueue";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
@@ -392,7 +393,7 @@ async function startOnHome(c: import("hono").Context<{ Bindings: Env; Variables:
     // A run is marked running, but if the server says it is not doing that job (it was restarted, or its report was lost)
     // the record is stale: close it and start again instead of making the owner wait for the 2 hour timeout.
     const st = await homeStatus(c.env);
-    if (st.ok && st.busy !== kind) {
+    if (st.ok && goneFromServer(run, st.jobs ?? (st.busy === kind ? [{ id: run.id }] : []))) {
       await failRun(c.env.DB, run.id, "The server is no longer running this job (it restarted or its report was lost).");
       ({ run, created } = await beginRun(c.env.DB, fam, uid, kind));
     }
@@ -431,7 +432,10 @@ app.post("/api/beets/youtube/info", async (c) => {
   }
 });
 
-/** Downloads one YouTube video's audio on the home server and imports it with the confirmed names (owner only). */
+/**
+ * Adds one YouTube video to the queue (owner only). Any number of links can be added at any time; the home server
+ * downloads a few at once and the rest wait here (status 'requested') until a slot frees up.
+ */
 app.post("/api/beets/youtube", async (c) => {
   const denied = youtubeOwner(c);
   if (denied) return denied;
@@ -441,45 +445,42 @@ app.post("/api/beets/youtube", async (c) => {
   const artist = typeof b.artist === "string" ? b.artist.trim().slice(0, 200) : "";
   const album = typeof b.album === "string" ? b.album.trim().slice(0, 200) : "";
   if (!url || url.length > 300 || !title || !artist) return c.json({ error: "A link, a title and an artist are required." }, 400);
+  const st = await homeStatus(c.env);
+  if (!st.ok) return c.json({ error: st.error || "Cannot reach the home server." }, 502);
   const fam = c.get("family").familyId;
-  const uid = c.get("user").uid;
-  let { run, created } = await beginRun(c.env.DB, fam, uid, "youtube");
-  if (!created) {
-    // Not a second request to coalesce (it carries other names): refuse while one is really running, else close the stale record.
-    const st = await homeStatus(c.env);
-    if (!st.ok || st.busy === "youtube") return c.json({ error: "A YouTube import is already running. Wait for it to finish." }, 409);
-    await failRun(c.env.DB, run.id, "The server is no longer running this job (it restarted or its report was lost).");
-    ({ run, created } = await beginRun(c.env.DB, fam, uid, "youtube"));
+  const { run, created } = await enqueueYoutube(c.env.DB, fam, c.get("user").uid, { url, title, artist, album });
+  if (!created) return c.json(run, 200); // the same link is already queued or downloading
+  // The song reaches the library with the next NAS sync; the badge is applied then (worker/nas.ts).
+  if (b.ai === true) {
+    await c.env.DB.prepare("INSERT INTO pending_ai (family_id, title, artist, created_at) VALUES (?, ?, ?, ?)")
+      .bind(fam, title.normalize("NFC"), artist.normalize("NFC"), Date.now()).run();
   }
-  try {
-    // A real cover when iTunes knows this song (artist and title must match); otherwise the server crops the video's thumbnail.
-    const art = await findSongArt(artist, title).catch(() => null);
-    const cover: Record<string, string> = {};
-    if (art) {
-      const bytes = new Uint8Array(art.data);
-      let bin = "";
-      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-      cover.cover = btoa(bin);
-    }
-    await homeStartJob(c.env, run.id, "youtube", { url, title, artist, album, ...cover });
-    // The song reaches the library with the next NAS sync; the badge is applied then (worker/nas.ts).
-    if (b.ai === true) {
-      await c.env.DB.prepare("INSERT INTO pending_ai (family_id, title, artist, created_at) VALUES (?, ?, ?, ?)")
-        .bind(fam, title.normalize("NFC"), artist.normalize("NFC"), Date.now()).run();
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Could not start the job";
-    await failRun(c.env.DB, run.id, msg);
-    return c.json({ error: msg }, 502);
-  }
-  return c.json(run, 201);
+  await dispatchQueued(c.env);
+  const now = (await getRun(c.env.DB, run.id)) ?? run;
+  if (now.status === "failed") return c.json({ error: now.log || "Could not start the job" }, 502);
+  return c.json(now, 201);
 });
 
 /** The nightly enrich script announces a run: its id as text. It reports the result through /report like an import. */
 app.post("/api/beets/agent/enrich-start", async (c) => {
   if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
-  const id = await startEnrich(c.env.DB);
+  const id = await startAgentRun(c.env.DB, "enrich");
   return id ? c.text(id) : c.json({ error: "no family" }, 404);
+});
+
+/** The home server's inbox watcher announces an import of files that arrived by themselves: its id as text. */
+app.post("/api/beets/agent/import-start", async (c) => {
+  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
+  const id = await startAgentRun(c.env.DB, "import");
+  return id ? c.text(id) : c.json({ error: "no family" }, 404);
+});
+
+/** The home server started: runs it had going died with it. Closes them and goes on with the queued YouTube links. */
+app.post("/api/beets/agent/reset", async (c) => {
+  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
+  await resetRunning(c.env.DB);
+  c.executionCtx.waitUntil(dispatchQueued(c.env));
+  return c.json({ ok: true });
 });
 
 /** Progress heartbeat while a run is going: ?id=&before=&now= (files in the inbox). */
@@ -500,6 +501,7 @@ app.post("/api/beets/agent/report", async (c) => {
   const ok = await finishRun(c.env.DB, {
     id: q.id, ok: q.ok === "1", inboxBefore: num(q.before), inboxAfter: num(q.after), exitCode: num(q.exit), log: await c.req.text(),
   });
+  c.executionCtx.waitUntil(dispatchQueued(c.env)); // a download slot may have freed up
   return ok ? c.json({ ok: true }) : c.json({ error: "no such running run" }, 404);
 });
 
