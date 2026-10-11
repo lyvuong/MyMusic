@@ -11,7 +11,8 @@
 # same key file as the mymusic-api container; if the Worker cannot be reached the job still runs and only logs locally.
 
 LOG="/mnt/user/appdata/beets/enrich.log"
-API="https://mymusic.lyvuong.workers.dev"
+API="https://mymusic.lv5.uk"                       # the Worker (same address as WORKER_URL of mymusic-api)
+LOCAL_API="http://localhost:8099"                  # mymusic-api on this server
 KEY_FILE="/boot/config/mymusic-agent.key"
 FIXVN="/mnt/user/appdata/beets/fix-vietnamese.py"   # copy of scripts/unraid/fix-vietnamese.py
 KEY=$(tr -d '[:space:]' < "$KEY_FILE" 2>/dev/null)
@@ -31,6 +32,26 @@ report() { # report <ok 1|0> <exit code> <log file>
 }
 
 RUNLOG=$(mktemp)
+
+# Preferred route: hand the run to mymusic-api. It does the same steps in small chunks, so an import that arrives
+# meanwhile is not kept waiting, and it reports the result itself. Only when it cannot be reached does this script
+# do the work below (same steps, one long lock).
+if [ -n "$ID" ] && [ -n "$KEY" ]; then
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H "X-Agent-Key: $KEY" -H "Content-Type: application/json"     -d "{\"kind\":\"enrich\",\"id\":\"$ID\"}" "$LOCAL_API/jobs")
+  if [ "$CODE" = "202" ]; then
+    echo "=== $(date '+%Y-%m-%d %H:%M:%S') enrich handed to mymusic-api ===" >> "$LOG"
+    rm -f "$RUNLOG"
+    exit 0
+  fi
+  if [ "$CODE" = "409" ]; then   # an enrich is already running (the automatic one): that one covers this night
+    MSG="=== $(date '+%Y-%m-%d %H:%M:%S') skipped: an enrich was already running ==="
+    echo "$MSG" >> "$LOG"
+    echo "$MSG" > "$RUNLOG"
+    report 1 0 "$RUNLOG"
+    rm -f "$RUNLOG"
+    exit 0
+  fi
+fi
 
 # Never overlap with an import (the Organize button or anything else holding this lock); wait up to 2 hours.
 echo "=== $(date '+%Y-%m-%d %H:%M:%S') waiting for the import lock ===" >> "$LOG"

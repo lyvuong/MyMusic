@@ -790,11 +790,14 @@ async function track(syncNas: () => Promise<boolean>, first: string[] = []) {
         else failed = r.kind === "youtube" ? `Could not add ${r.label ?? "a song"}. See the log below.` : "Beets failed. See the log below.";
       }
       const main = open.find((r) => r.kind !== "youtube") ?? null;
+      const imp = open.find((r) => r.kind === "import");
+      const enr = open.find((r) => r.kind === "enrich");
       const songs = open.filter((r) => r.kind === "youtube").length;
       setOrganize({
         runs, active: main, busy: main !== null,
         msg: [
-          main ? (main.status === "requested" ? "Waiting for the server…" : main.kind === "enrich" ? "Beets is adding art and genres…" : "Beets is importing…") : "",
+          imp ? (imp.status === "requested" ? "Waiting for the server…" : "Beets is importing…") : "",
+          enr ? (enr.status === "requested" ? "Enrich is waiting for the server…" : "Beets is adding art and genres…") : "",
           songs ? `${songs} YouTube song${songs > 1 ? "s" : ""} in progress…` : "",
         ].filter(Boolean).join(" ") || organizeState.msg,
       });
@@ -834,9 +837,30 @@ interface YtRow {
   ai: boolean;
 }
 
+/** Why none of the looked-up links can be added yet, for the line under the form. */
+function ytHint(rows: YtRow[]): string {
+  const pending = rows.filter((r) => !r.info && !r.error).length;
+  if (pending) return `${pending} link${pending === 1 ? " is" : "s are"} still being looked up.`;
+  const tooLong = rows.filter((r) => r.info?.tooLong).length;
+  const noArtist = rows.filter((r) => r.info && !r.info.tooLong && !r.artist.trim()).length;
+  const noTitle = rows.filter((r) => r.info && !r.info.tooLong && !r.title.trim()).length;
+  const failed = rows.filter((r) => r.error).length;
+  const why = [
+    noArtist ? `fill in the artist (${noArtist})` : "",
+    noTitle ? `fill in the title (${noTitle})` : "",
+    tooLong ? `${tooLong} too long (max 2 hours), remove ${tooLong === 1 ? "it" : "them"}` : "",
+    failed ? `${failed} could not be read, remove ${failed === 1 ? "it" : "them"} or fix the link` : "",
+  ].filter(Boolean);
+  return why.length ? `Not ready: ${why.join("; ")}.` : "";
+}
+
 function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>; home: ServerStatus | null; recheck: () => Promise<void> }) {
   const down = home !== null && !home.ok;
-  const { busy, msg, runs, active } = useSyncExternalStore(watchOrganize, () => organizeState);
+  const { busy, msg, runs } = useSyncExternalStore(watchOrganize, () => organizeState);
+  // An import and an enrich may run at the same time (the server queues them for the library); each button only waits for its own kind.
+  const imp = runs.find((r) => r.kind === "import" && isOpen(r)) ?? null;
+  const enr = runs.find((r) => r.kind === "enrich" && isOpen(r)) ?? null;
+  const scanning = busy && !imp && !enr;
   const sync = useRef(syncNas);
   sync.current = syncNas;
 
@@ -928,8 +952,8 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
   return (
     <>
       <p>
-        <button disabled={busy || down} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
-        <button disabled={busy || down} onClick={() => void enrich()} title="Fetch missing cover art and genres now, like the nightly job">Run enrich now</button>{" "}
+        <button disabled={scanning || imp !== null || down} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
+        <button disabled={scanning || enr !== null || down} onClick={() => void enrich()} title="Fetch missing cover art and genres now, like the nightly job">Run enrich now</button>{" "}
         {busy && <span className="spinner" aria-hidden="true" />}
         <small className="muted" role="status">{msg}</small>
       </p>
@@ -998,6 +1022,9 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
             </button>
           </p>
         )}
+        {ytRows.length > 0 && !ytBusy && !ytRows.some(usable) && (
+          <p><small className="muted">{ytHint(ytRows)}</small></p>
+        )}
         {ytErr && <p className="error" role="alert">{ytErr}</p>}
       </form>
       {ytRuns.length > 0 && (
@@ -1029,23 +1056,23 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
           Home server unavailable: {home.error} <button className="link" onClick={() => void recheck()}>Check again</button>
         </p>
       )}
-      {active?.status === "running" && active.kind === "enrich" && (() => {
+      {enr?.status === "running" && (() => {
         // The server reports before = number of steps and now = steps still to do.
         const total = ENRICH_STEPS.length;
-        const done = Math.min(total, Math.max(0, (active.inboxBefore ?? total) - (active.inboxNow ?? total)));
+        const done = Math.min(total, Math.max(0, (enr.inboxBefore ?? total) - (enr.inboxNow ?? total)));
         return (
           <p>
             <progress max={total} value={done} />{" "}
             <small className="muted">
-              {active.inboxNow === null ? "Waiting for the server to start…" : `Step ${Math.min(total, done + 1)} of ${total}: ${ENRICH_STEPS[Math.min(total - 1, done)]}`}
+              {enr.inboxNow === null ? "Waiting for the server to start…" : `Step ${Math.min(total, done + 1)} of ${total}: ${ENRICH_STEPS[Math.min(total - 1, done)]}`}
             </small>
           </p>
         );
       })()}
-      {active?.status === "running" && active.kind === "import" && active.inboxBefore !== null && active.inboxNow !== null && active.inboxBefore > 0 && (
+      {imp?.status === "running" && imp.inboxBefore !== null && imp.inboxNow !== null && imp.inboxBefore > 0 && (
         <p>
-          <progress max={active.inboxBefore} value={Math.max(0, active.inboxBefore - active.inboxNow)} />{" "}
-          <small className="muted">{Math.max(0, active.inboxBefore - active.inboxNow)} of {active.inboxBefore} files imported</small>
+          <progress max={imp.inboxBefore} value={Math.max(0, imp.inboxBefore - imp.inboxNow)} />{" "}
+          <small className="muted">{Math.max(0, imp.inboxBefore - imp.inboxNow)} of {imp.inboxBefore} files imported</small>
         </p>
       )}
       {runs.length > 0 && (

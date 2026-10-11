@@ -3,7 +3,7 @@
 `inotifywait` reports each finished write and each move into the inbox. The Inbox class remembers when every top-level
 entry (a loose file, or an album folder) was last touched; an entry is taken into a batch once it has been quiet for
 AUTO_IMPORT_DEBOUNCE seconds, so a folder that is still being copied is never split. Batches are imported one after
-another while new files keep arriving; the enrich runs once, when nothing is waiting any more.
+another while new files keep arriving; the enrich runs once, when nothing is waiting any more, in its own thread.
 
 Needs `inotify-tools` in the container. /mnt/user is a FUSE share: events are seen for writes that go through it (SMB,
 File Browser, other containers), not for writes made straight to a disk.
@@ -136,8 +136,37 @@ def new_run_id(kind):
     return "auto-" + uuid.uuid4().hex[:16]
 
 
-def pipeline(inbox, run=run_job_blocking, make_id=new_run_id, mtime_of=lambda e: os.path.getmtime(os.path.join(config.INBOX, e))):
-    """Import batch after batch; enrich once the inbox has gone quiet. Runs for ever in its own thread."""
+class Enricher:
+    """Runs the enrich in its own thread, so the next import batch never waits behind it. Asking while one is running
+    makes it go once more afterwards, which covers the songs imported in the meantime."""
+
+    def __init__(self, run=run_job_blocking, make_id=new_run_id):
+        self.run = run
+        self.make_id = make_id
+        self.cond = threading.Condition()
+        self.wanted = False
+
+    def request(self):
+        with self.cond:
+            self.wanted = True
+            self.cond.notify_all()
+
+    def loop(self):
+        while True:
+            with self.cond:
+                while not self.wanted:
+                    self.cond.wait()
+                self.wanted = False
+            try:
+                self.run("enrich", None, None, self.make_id)
+            except Exception as e:
+                log("auto enrich crashed: %s" % e)
+
+
+def pipeline(inbox, run=run_job_blocking, make_id=new_run_id, mtime_of=lambda e: os.path.getmtime(os.path.join(config.INBOX, e)),
+             enrich=None):
+    """Import batch after batch; ask for an enrich once the inbox has gone quiet. Runs for ever in its own thread.
+    `enrich` is called to ask for it (it must not block); without one the enrich runs right here."""
     imported = False
     while True:
         batch = inbox.next_batch()
@@ -150,10 +179,13 @@ def pipeline(inbox, run=run_job_blocking, make_id=new_run_id, mtime_of=lambda e:
         # An entry still there after its run could not be moved; do not loop on it until it changes.
         inbox.block([e for e in batch if os.path.lexists(os.path.join(config.INBOX, e))], mtime_of)
         if imported and not inbox.waiting():
-            try:
-                run("enrich", None, None, make_id)
-            except Exception as e:
-                log("auto enrich crashed: %s" % e)
+            if enrich is not None:
+                enrich()
+            else:
+                try:
+                    run("enrich", None, None, make_id)
+                except Exception as e:
+                    log("auto enrich crashed: %s" % e)
             imported = False
 
 
@@ -164,5 +196,7 @@ def start():
     inbox = Inbox(config.AUTO_IMPORT_DEBOUNCE)
     inbox.seed()
     threading.Thread(target=read_events, args=(inbox, inbox.touch), daemon=True).start()
-    threading.Thread(target=pipeline, args=(inbox,), daemon=True).start()
+    enricher = Enricher()
+    threading.Thread(target=enricher.loop, daemon=True).start()
+    threading.Thread(target=pipeline, args=(inbox,), kwargs={"enrich": enricher.request}, daemon=True).start()
     return inbox

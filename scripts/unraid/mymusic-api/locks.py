@@ -1,7 +1,8 @@
 """The Beets library lock, and which jobs may run at the same time.
 
-Import and enrich run one at a time; up to MAX_YT YouTube jobs run beside them (their downloads do not touch the
-library, only their last step does, and that step takes the library lock itself).
+One import, one enrich and up to MAX_YT YouTube jobs may run at the same time. They share the library through the
+lock, which each takes only for the part that writes: an import for its whole run, a YouTube job for its last step, an
+enrich for one small chunk at a time, stepping aside whenever somebody else is waiting (see `polite`).
 """
 import threading
 import time
@@ -13,13 +14,36 @@ from reporting import report
 from util import log
 
 
+_wait_lock = threading.Lock()
+_waiting = 0  # callers that are queued for the library lock right now (not counting polite ones)
+
+
+def library_wanted():
+    """True while an import or a YouTube job is waiting for the library lock."""
+    return _waiting > 0
+
+
 @contextmanager
-def beets_lock(wait):
-    """Holds /tmp/beets-import.lock (shared with beets-enrich.sh) or raises TimeoutError after `wait` seconds."""
+def beets_lock(wait, polite=False):
+    """Holds /tmp/beets-import.lock (shared with beets-enrich.sh) or raises TimeoutError after `wait` seconds.
+    A `polite` caller (the enrich) first lets everybody who is waiting go ahead, then queues for the lock itself:
+    flock does not queue fairly, and a long enrich would otherwise keep winning the lock back from an import."""
+    global _waiting
     import fcntl  # Unix only; imported here so the rest of the module (and the tests) load anywhere
-    f = open(config.LOCK_PATH, "w")
     deadline = time.time() + wait
+    counted = False
+    f = None
     try:
+        if polite:
+            while library_wanted():
+                if time.time() >= deadline:
+                    raise TimeoutError("the Beets library is busy (an import is running)")
+                time.sleep(1)
+        else:
+            with _wait_lock:
+                _waiting += 1
+            counted = True
+        f = open(config.LOCK_PATH, "w")
         while True:
             try:
                 fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -28,9 +52,17 @@ def beets_lock(wait):
                 if time.time() >= deadline:
                     raise TimeoutError("the Beets library is busy (an import or enrich is running)")
                 time.sleep(1)
+        if counted:
+            with _wait_lock:
+                _waiting -= 1
+            counted = False
         yield
     finally:
-        f.close()
+        if counted:
+            with _wait_lock:
+                _waiting -= 1
+        if f is not None:
+            f.close()
 
 
 _cond = threading.Condition()
@@ -39,13 +71,13 @@ active = {}  # run id -> kind, for the jobs running now
 
 def _why_blocked(kind):
     """None when a job of this kind may start now, else the reason it may not. Call with _cond held."""
+    running = sum(1 for k in active.values() if k == kind)
     if kind == "youtube":
-        if sum(1 for k in active.values() if k == "youtube") >= config.MAX_YT:
+        if running >= config.MAX_YT:
             return "%d YouTube downloads are already running on the server." % config.MAX_YT
         return None
-    for k in active.values():
-        if k != "youtube":
-            return "Another job (%s) is already running on the server." % k
+    if running:
+        return "Another %s is already running on the server." % kind
     return None
 
 
