@@ -33,6 +33,13 @@ class DuplicateLog(unittest.TestCase):
         text = "skip /d/a\nduplicate-skip /downloads/_staging/r/Album\nduplicate-skip /downloads/_staging/r/x.mp3; /downloads/_staging/r/y.mp3\nasis /d/b\n"
         self.assertEqual(parse_duplicate_skips(text), ["/downloads/_staging/r/Album", "/downloads/_staging/r/x.mp3", "/downloads/_staging/r/y.mp3"])
 
+    def test_parse_keep_tag_and_console_text(self):
+        # What this server's Beets really wrote: skipped duplicates are tagged duplicate-keep, and the console says why.
+        text = ("asis /downloads/_staging/r/a.mp3\nduplicate-keep /downloads/_staging/r/a.mp3\n"
+                "/downloads/_staging/r/b.mp3\nImporting as-is.\nThis track is already in the library!\nSkipping.\n"
+                "/downloads/_staging/r/c.mp3\nImporting as-is.\n")
+        self.assertEqual(parse_duplicate_skips(text), ["/downloads/_staging/r/a.mp3", "/downloads/_staging/r/b.mp3"])
+
     def test_under(self):
         roots = ["/s/Album", "/s/x.mp3"]
         self.assertTrue(under("/s/Album/01.mp3", roots))

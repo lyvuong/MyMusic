@@ -47,13 +47,23 @@ def count_inbox():
 
 
 def parse_duplicate_skips(text):
-    """Paths Beets logged as skipped because they duplicate a song or album already in the library.
-    Log lines look like `duplicate-skip /downloads/_staging/x/Album`; several paths are joined with '; '."""
+    """Paths Beets met a duplicate of a song or album already in the library for. Two signals, both read from `text`
+    (the -l log followed by Beets' own output):
+    - log lines `duplicate-skip <path>` and `duplicate-keep <path>` (several paths joined with '; '). Beets writes
+      `duplicate-keep` even for songs it then skipped in quiet mode, so both tags count;
+    - the console line `This track is already in the library!` (or `album`), which follows the path it is about.
+    Whether a file is really a duplicate is decided later (names and length); this only says where to look."""
     paths = []
+    last_path = None
     for line in text.splitlines():
-        if line.startswith("duplicate-skip "):
-            paths += [p.strip() for p in re.split(r";\s+(?=/)", line[len("duplicate-skip "):]) if p.strip()]
-    return paths
+        for tag in ("duplicate-skip ", "duplicate-keep "):
+            if line.startswith(tag):
+                paths += [p.strip() for p in re.split(r";\s+(?=/)", line[len(tag):]) if p.strip()]
+        if line.startswith("/"):
+            last_path = line.strip()
+        elif "is already in the library" in line and last_path:
+            paths.append(last_path)
+    return list(dict.fromkeys(paths))
 
 
 def under(path, roots):
@@ -111,7 +121,7 @@ def park(run_id, stage_api, stage_box, out):
 def settle(run_id, stage_api, stage_box, dup_log, out):
     """After the passes: delete confirmed duplicates, then move whatever is left out of the way.
     Returns how many files were left behind (not imported)."""
-    skipped = parse_duplicate_skips(dup_log)
+    skipped = parse_duplicate_skips(dup_log + "\n" + "".join(out))
     audio = [p for p in staged_audio(stage_api, stage_box) if under(p, skipped)]
     if audio:
         verdict = None
