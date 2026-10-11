@@ -837,7 +837,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
       const info = await api.youtubeInfo(url);
       setYt({ url, info });
       setYtFields({ title: info.title, artist: info.artist, album: info.album });
-      setYtAi(info.aiHint);
+      setYtAi(info.aiLabel || info.aiHint);
     } catch (e) {
       setYt(null);
       setYtErr(e instanceof Error ? e.message : "Could not read that link");
@@ -900,7 +900,9 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
             <p>
               <label>
                 <input type="checkbox" checked={ytAi} onChange={(e) => setYtAi(e.target.checked)} /> Made by AI (shows a badge)
-                {yt.info.aiHint && <small className="muted"> · the video says it is AI-generated</small>}
+                {yt.info.aiLabel
+                  ? <small className="muted"> · YouTube labels this video as made with AI</small>
+                  : yt.info.aiHint && <small className="muted"> · the video's description mentions AI</small>}
               </label>
             </p>
             <p>

@@ -72,6 +72,8 @@ export interface YoutubeInfo {
   thumbnail: string | null;
   /** Longer than the server accepts. */
   tooLong: boolean;
+  /** YouTube itself labels the video "Made with AI" (altered or generated sounds or visuals). */
+  aiLabel: boolean;
   /** The video's description or tags suggest AI-generated music (Suno, Udio, "AI generated"). */
   aiHint: boolean;
 }

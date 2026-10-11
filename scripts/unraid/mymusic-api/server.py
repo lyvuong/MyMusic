@@ -437,6 +437,45 @@ NOISE_TAIL = re.compile(r"\s*[-|–—]\s*(?:%s)\b.*$" % NOISE, re.I)
 AI_HINT = re.compile(r"\b(suno|udio|ai[ -]?generated|generated (?:by|with|using) ai|(?:made|created|produced|composed) (?:by|with|using) ai|ai (?:music|song|cover|vocals?))\b", re.I)
 
 
+def yt_video_id(url):
+    u = urllib.parse.urlsplit(url)
+    if (u.hostname or "").lower() == "youtu.be":
+        return u.path.strip("/")
+    q = urllib.parse.parse_qs(u.query).get("v")
+    return q[0] if q else u.path.rstrip("/").rsplit("/", 1)[-1]
+
+
+def ai_label_in(html):
+    """True when the watch page carries YouTube's "How this was made" panel saying the sounds or visuals were altered or
+    generated (the "Made with AI" label creators must set, which YouTube also sets itself). English text, so the page is
+    requested with hl=en; the panel's key name does not change with the language."""
+    i = html.find('"howThisWasMadeSectionViewModel":{')  # the panel itself; the bare name also sits in a list of renderer names
+    if i < 0:
+        return False
+    return bool(re.search(r"altered or (?:fully )?generated|made with ai|altered or synthetic|synthetic", html[i:i + 3000], re.I))
+
+
+def yt_ai_label(url):
+    """Reads YouTube's own AI label for a video (yt-dlp does not expose it). False when unknown or on any error."""
+    vid = yt_video_id(url)
+    if not re.match(r"^[\w-]{6,20}$", vid):
+        return False
+    req = urllib.request.Request(
+        "https://www.youtube.com/watch?v=%s&hl=en" % vid,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cookie": "CONSENT=YES+1; SOCS=CAI",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as r:
+            return ai_label_in(r.read(4_000_000).decode("utf-8", errors="replace"))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        log("AI label lookup failed: %s" % e)
+        return False
+
+
 def tidy_title(title, artist=""):
     """Drops "(Official Video)", "[4K Remaster]", "| Lyrics" noise, a leading "Artist - ", and anything after a second
     " - " ("Artist - Song - Playlist name - Channel" becomes "Song")."""
@@ -484,6 +523,7 @@ def yt_info(url):
         "duration": duration,
         "thumbnail": d.get("thumbnail") if isinstance(d.get("thumbnail"), str) else None,
         "tooLong": duration > YT_MAX_SECONDS,
+        "aiLabel": yt_ai_label(url),
         "aiHint": bool(AI_HINT.search(" ".join([str(d.get("title") or ""), str(d.get("description") or "")[:3000], " ".join(str(x) for x in (d.get("tags") or []))]))),
     }
 
