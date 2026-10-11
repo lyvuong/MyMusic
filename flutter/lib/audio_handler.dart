@@ -6,6 +6,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
+import 'env.dart';
 import 'mixes.dart';
 import 'models.dart';
 import 'state.dart';
@@ -124,7 +125,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         artist: t.artist.isEmpty ? null : t.artist,
         album: t.album.isEmpty ? null : t.album,
         duration: t.duration > 0 ? Duration(milliseconds: (t.duration * 1000).round()) : null,
-        artUri: app.artUriFor(t),
+        artUri: app.artUriFor(t) ?? _logo,
         artHeaders: headers,
         playable: true,
         extras: {'trackId': t.id},
@@ -252,12 +253,16 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         id: id,
         title: title,
         displayDescription: subtitle,
-        artUri: art == null ? null : app.artUriFor(art),
+        artUri: art == null ? _logo : app.artUriFor(art) ?? _logo,
         playable: false,
         extras: grid ? _gridChildren : null,
       );
 
   static String _enc(String s) => Uri.encodeComponent(s);
+
+  /// The app's logo (the web app's public icon). It stands in wherever a folder or song has no cover of its own, so
+  /// the car screen always shows the app's identity instead of a blank tile.
+  static Uri get _logo => Uri.parse('${Env.apiUrl}/icon-512.png');
 
   /// Signed cover URLs for [ids], but never holds a car folder up for more than two seconds: the request goes on in
   /// the background and later lists use what it brought back (plain URLs are the fallback meanwhile).
@@ -404,8 +409,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final coverUri = cover == null ? null : app.artUriFor(cover);
     return [
       if (shown.length > 1 && parentMediaId != 'all') ...[
-        MediaItem(id: 'play:$parentMediaId', title: 'Play all', displayDescription: '${tracks.length} songs', artUri: coverUri, playable: true),
-        MediaItem(id: 'shuffle:$parentMediaId', title: 'Shuffle', artUri: coverUri, playable: true),
+        MediaItem(id: 'play:$parentMediaId', title: 'Play all', displayDescription: '${tracks.length} songs', artUri: coverUri ?? _logo, playable: true),
+        MediaItem(id: 'shuffle:$parentMediaId', title: 'Shuffle', artUri: coverUri ?? _logo, playable: true),
       ],
       for (final t in shown) _item(t, headers, ctx: parentMediaId),
     ];
