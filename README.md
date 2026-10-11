@@ -129,7 +129,7 @@ yt-dlp:
   volumes:
     - /mnt/user/Music/_inbox:/downloads                # read-write: downloads land in /downloads/_youtube/<run id>
 ```
-Check it: `docker exec yt-dlp yt-dlp --version`, then try a link in the web app. If yt-dlp says it needs a JavaScript runtime, set `YTDLP_ARGS=--js-runtimes node` in the `mymusic-api` environment and restart it. Downloads go to a private folder `_inbox/_youtube/<run id>` that is removed afterwards. Downloading from YouTube may go against its terms of service and copyright; use it for your own purposes only.
+Check it: `docker exec yt-dlp yt-dlp --version`, then try a link in the web app. The API passes `--js-runtimes node` to yt-dlp (YouTube needs a JavaScript runtime, and yt-dlp only looks for deno on its own); set the `YTDLP_ARGS` environment variable of `mymusic-api` to change or clear that. Downloads go to a private folder `_inbox/_youtube/<run id>` that is removed afterwards. Downloading from YouTube may go against its terms of service and copyright; use it for your own purposes only.
 
 Logs on the server (all in `/mnt/user/appdata/beets/`): `auto-import.log` (imports and YouTube imports), `enrich.log` (enrich), `tag-edits.log` (name edits). `docker logs mymusic-api` shows the API's own requests.
 
