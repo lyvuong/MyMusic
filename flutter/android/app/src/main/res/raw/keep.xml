@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Icons that audio_service looks up by name at runtime must survive release resource shrinking. -->
+<!-- Icons that audio_service looks up by name at runtime (its own button icons included) must survive release
+     resource shrinking; without them every playback-state update throws and Android Auto shows no player. -->
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@drawable/ic_notification,@drawable/ic_favorite,@drawable/ic_favorite_border" />
+    tools:keep="@drawable/ic_notification,@drawable/ic_favorite,@drawable/ic_favorite_border,@drawable/audio_service_*" />

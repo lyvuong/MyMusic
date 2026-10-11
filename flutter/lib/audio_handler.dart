@@ -94,7 +94,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (tracks.isEmpty) return;
     _tracks = tracks;
     final headers = await _artHeaders();
-    await app.ensureArtUrls(tracks.take(100).map((t) => t.id));
+    await _signedArt(tracks.take(100).map((t) => t.id));
     _items = [for (final t in tracks) _item(t, headers)];
     queue.add(_items);
     _order = List.generate(tracks.length, (i) => i);
@@ -259,6 +259,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   static String _enc(String s) => Uri.encodeComponent(s);
 
+  /// Signed cover URLs for [ids], but never holds a car folder up for more than two seconds: the request goes on in
+  /// the background and later lists use what it brought back (plain URLs are the fallback meanwhile).
+  Future<void> _signedArt(Iterable<String> ids) =>
+      app.ensureArtUrls(ids).timeout(const Duration(seconds: 2), onTimeout: () {});
+
   /// The tracks behind a context id (see class comment).
   List<Track> _context(String ctx) {
     final all = app.allTracks;
@@ -379,21 +384,21 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         return _library();
       case 'foryou':
         final dp = daypartOf(DateTime.now());
-        await app.ensureArtUrls([...app.mixFor(dp).tracks, ...app.popularTracks, ...app.topRatedTracks].take(60).map((t) => t.id));
+        await _signedArt([...app.mixFor(dp).tracks, ...app.popularTracks, ...app.topRatedTracks].take(60).map((t) => t.id));
         return _forYou();
       case 'albums':
-        await app.ensureArtUrls(_folderArtIds('albums'));
+        await _signedArt(_folderArtIds('albums'));
         return _albumFolders();
       case 'artists':
-        await app.ensureArtUrls(_folderArtIds('artists'));
+        await _signedArt(_folderArtIds('artists'));
         return _artistFolders();
       case 'playlists':
-        await app.ensureArtUrls(_folderArtIds('playlists'));
+        await _signedArt(_folderArtIds('playlists'));
         return _playlistFolders();
     }
     final tracks = _context(parentMediaId);
     final shown = tracks.take(500).toList();
-    await app.ensureArtUrls(shown.map((t) => t.id));
+    await _signedArt(shown.map((t) => t.id));
     final headers = await _artHeaders();
     final cover = _artOf(shown);
     final coverUri = cover == null ? null : app.artUriFor(cover);
