@@ -141,3 +141,24 @@ class Suggestion {
         ],
       );
 }
+
+/// A nightly AI mix for one time of day, built on the server from my ratings and what the family plays.
+class Mix {
+  const Mix({required this.daypart, required this.title, required this.intro, required this.trackIds, required this.generatedAt});
+  final String daypart; // morning | afternoon | evening | night
+  final String title;
+  final String intro;
+  final List<String> trackIds;
+  final int generatedAt; // epoch ms
+
+  factory Mix.fromJson(Map<String, dynamic> j) => Mix(
+        daypart: j['daypart'] as String,
+        title: (j['title'] as String?) ?? '',
+        intro: (j['intro'] as String?) ?? '',
+        trackIds: ((j['trackIds'] as List?) ?? []).cast<String>().toList(),
+        generatedAt: (j['generatedAt'] as num?)?.toInt() ?? 0,
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'daypart': daypart, 'title': title, 'intro': intro, 'trackIds': trackIds, 'generatedAt': generatedAt};
+}

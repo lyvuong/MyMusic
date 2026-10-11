@@ -12,7 +12,21 @@ const LOVED = 60;
 const DISLIKED = 25;
 const MIN_RATINGS = 3;
 
-interface Row { id: string; title: string; artist: string; album: string; rating: number | null }
+interface Row { id: string; title: string; artist: string; album: string; rating: number | null; plays?: number | null }
+
+/** How many songs in the candidate list are marked as popular with the family. */
+const POPULAR_MARKED = 40;
+
+export const DAYPARTS = ["morning", "afternoon", "evening", "night"] as const;
+export type Daypart = (typeof DAYPARTS)[number];
+
+/** What the listener wants at that time of day; used as the "request" for the nightly mixes. */
+export const DAYPART_HINT: Record<Daypart, string> = {
+  morning: "Morning commute: energising, upbeat and familiar songs to start the day.",
+  afternoon: "Afternoon drive: easy-going, steady, feel-good songs that keep focus without being heavy.",
+  evening: "Evening drive home: relaxed, warm songs to wind down, with a few singalong favourites.",
+  night: "Late night drive: calm, mellow and atmospheric songs, nothing jarring.",
+};
 
 export class SuggestError extends Error {
   constructor(public status: 400 | 501 | 502, message: string) {
@@ -26,7 +40,7 @@ const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 const shuffle = <T,>(a: T[]) => a.map((v) => ({ v, k: Math.random() })).sort((x, y) => x.k - y.k).map((x) => x.v);
 
 /** Builds the prompt data: how the user rated artists/songs and the pool of songs the AI may pick from. */
-function buildContext(all: Row[]) {
+export function buildContext(all: Row[]) {
   const rated = all.filter((t) => t.rating !== null);
   const artistStats = new Map<string, { sum: number; n: number }>();
   for (const t of rated) {
@@ -48,7 +62,7 @@ function buildContext(all: Row[]) {
   // AI can still surprise you.
   const pool = all.filter((t) => t.rating === null || t.rating >= 4);
   const scored = pool
-    .map((t) => ({ t, score: (avg(t.artist) ?? 3) + (t.rating ?? 0) * 0.2 + Math.random() * 1.5 }))
+    .map((t) => ({ t, score: (avg(t.artist) ?? 3) + (t.rating ?? 0) * 0.2 + Math.log1p(t.plays ?? 0) * 0.5 + Math.random() * 1.5 }))
     .sort((a, b) => b.score - a.score);
   const top = scored.slice(0, Math.floor(CANDIDATES * 0.7));
   const rest = shuffle(scored.slice(top.length)).slice(0, CANDIDATES - top.length);
@@ -59,10 +73,13 @@ function buildContext(all: Row[]) {
 
 export async function suggest(env: Env, familyId: string, uid: string, mood: string): Promise<Suggestion> {
   if (!env.AI) throw new SuggestError(501, "AI suggestions are not configured");
+  const since = Date.now() - 90 * 24 * 3600 * 1000;
   const rows = await env.DB.prepare(
-    "SELECT t.id, t.title, t.artist, t.album, r.rating FROM tracks t " +
-      "LEFT JOIN ratings r ON r.track_id = t.id AND r.uid = ? WHERE t.family_id = ? AND t.deleted = 0",
-  ).bind(uid, familyId).all<Row>();
+    "SELECT t.id, t.title, t.artist, t.album, r.rating, p.n AS plays FROM tracks t " +
+      "LEFT JOIN ratings r ON r.track_id = t.id AND r.uid = ? " +
+      "LEFT JOIN (SELECT track_id, COUNT(*) AS n FROM plays WHERE family_id = ? AND played_at > ? GROUP BY track_id) p ON p.track_id = t.id " +
+      "WHERE t.family_id = ? AND t.deleted = 0",
+  ).bind(uid, familyId, since, familyId).all<Row>();
   const all = rows.results;
   if (all.length === 0) throw new SuggestError(400, "The library is empty");
   const ctx = buildContext(all);
@@ -73,7 +90,13 @@ export async function suggest(env: Env, familyId: string, uid: string, mood: str
     ctx.loved.length ? "Loved songs (4-5 stars):\n" + ctx.loved.map((t) => `- ${clip(label(t), 90)} [${t.rating}]`).join("\n") : "",
     ctx.disliked.length ? "Disliked songs (1-2 stars):\n" + ctx.disliked.map((t) => `- ${clip(label(t), 90)} [${t.rating}]`).join("\n") : "",
   ].filter(Boolean).join("\n\n") || "The listener has not rated any songs yet.";
-  const list = ctx.candidates.map((t, i) => `${i + 1}|${clip(label(t), 80)}${t.album ? `|${clip(t.album, 40)}` : ""}`).join("\n");
+  // The family's most played songs among the candidates get a star, so "popular" can be weighed against taste.
+  const popularIds = new Set(
+    ctx.candidates.filter((t) => (t.plays ?? 0) > 0).sort((a, b) => (b.plays ?? 0) - (a.plays ?? 0)).slice(0, POPULAR_MARKED).map((t) => t.id),
+  );
+  const list = ctx.candidates
+    .map((t, i) => `${i + 1}|${clip(label(t), 80)}${t.album ? `|${clip(t.album, 40)}` : "|"}${popularIds.has(t.id) ? "|*" : ""}`)
+    .join("\n");
 
   const system =
     "You are a music curator for one listener of a private family music library. Use their ratings to understand their taste. " +
@@ -81,7 +104,7 @@ export async function suggest(env: Env, familyId: string, uid: string, mood: str
   const user =
     `LISTENER REQUEST: ${mood ? clip(mood, 200) : "Surprise me with what I would enjoy right now."}\n\n` +
     `TASTE DATA:\n${taste}\n\n` +
-    `LIBRARY CANDIDATES (number|artist - title|album):\n${list}\n\n` +
+    `LIBRARY CANDIDATES (number|artist - title|album|* = popular with the family lately):\n${list}\n\n` +
     "Task: 1) Build a playlist of 15 to 20 songs from LIBRARY CANDIDATES that fits the request and the listener's taste, ordered as a good listening flow (mix familiar loves with a few new finds). " +
     "Refer to songs only by their candidate number \"n\". Give each a short reason \"why\" (max 12 words). " +
     "2) Suggest 5 artists or albums NOT in the library that this listener would probably like, each with a short reason. Only real artists. " +

@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'api.dart';
+import 'mixes.dart';
 import 'models.dart';
 import 'store.dart';
 import 'updater.dart';
@@ -125,7 +126,104 @@ class AppState extends ChangeNotifier {
   void markPlayed(String id) {
     store.recent..remove(id)..insert(0, id);
     if (store.recent.length > 50) store.recent.removeRange(50, store.recent.length);
+    if (!id.startsWith('local:')) {
+      store.pendingPlays.add({'id': id, 'at': DateTime.now().millisecondsSinceEpoch});
+      if (store.pendingPlays.length > 500) store.pendingPlays.removeRange(0, store.pendingPlays.length - 500);
+      unawaited(_flushPlays());
+    }
     unawaited(store.save());
+  }
+
+  bool _flushingPlays = false;
+
+  /// Uploads queued plays in batches of 50; whatever fails stays queued for the next play or sync.
+  Future<void> _flushPlays() async {
+    if (_flushingPlays || family == null) return;
+    _flushingPlays = true;
+    try {
+      while (store.pendingPlays.isNotEmpty) {
+        final batch = store.pendingPlays.take(50).toList();
+        try {
+          await api.postPlays(batch);
+        } on ApiException catch (e) {
+          if (e.status != 400) return; // 400: rejected for good, drop it
+        } catch (_) {
+          return; // offline
+        }
+        store.pendingPlays.removeRange(0, batch.length);
+        await store.save();
+      }
+    } finally {
+      _flushingPlays = false;
+    }
+  }
+
+  // ---- Car: popular songs, nightly mixes, cover URLs ---------------------------------------
+
+  /// The family's most played songs, most played first.
+  List<Track> get popularTracks {
+    final ids = store.popular.keys.toList()..sort((a, b) => store.popular[b]!.compareTo(store.popular[a]!));
+    return [for (final id in ids) ?track(id)];
+  }
+
+  /// Songs I rated 4-5, best first (family popularity breaks ties).
+  List<Track> get topRatedTracks {
+    final ids = store.ratings.entries.where((e) => e.value >= 4).map((e) => e.key).toList()
+      ..sort((a, b) {
+        final c = store.ratings[b]!.compareTo(store.ratings[a]!);
+        return c != 0 ? c : (store.popular[b] ?? 0).compareTo(store.popular[a] ?? 0);
+      });
+    return [for (final id in ids) ?track(id)];
+  }
+
+  /// Songs I rated well but have not played lately, in a shuffle that stays the same all day.
+  List<Track> get rediscoverTracks {
+    final recent = store.recent.toSet();
+    final now = DateTime.now();
+    final list = [for (final t in topRatedTracks) if (!recent.contains(t.id)) t];
+    return list..shuffle(Random(now.year * 10000 + now.month * 100 + now.day));
+  }
+
+  /// The mix for [daypart]: the AI one from last night if there is one, else a local pick from ratings and popularity.
+  ({String title, String subtitle, List<Track> tracks}) mixFor(String daypart) {
+    final m = store.mixes[daypart];
+    final fromServer = m == null ? <Track>[] : [for (final id in m.trackIds) ?track(id)];
+    final now = DateTime.now();
+    final tracks = fromServer.isNotEmpty
+        ? fromServer
+        : localMix(store.tracks.values, ratings: store.ratings, popular: store.popular, seed: now.year * 10000 + now.month * 100 + now.day);
+    final title = '${greetingFor(daypart)} mix';
+    final intro = fromServer.isNotEmpty && m!.intro.isNotEmpty ? m.intro : '${tracks.length} songs picked for you';
+    return (title: title, subtitle: intro, tracks: tracks);
+  }
+
+  final Map<String, String> _artUrls = {}; // signed car-sized cover URLs by track id
+  int _artExp = 0; // epoch seconds when the cached URLs stop working
+
+  /// Fetches signed cover URLs for [ids] that have none yet (the car's image loader cannot send the login header).
+  /// Best-effort: on failure [artUriFor] falls back to the plain URL.
+  Future<void> ensureArtUrls(Iterable<String> ids) async {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    if (_artExp - now < 1800) {
+      _artUrls.clear(); // expired or about to
+      _artExp = 0;
+    }
+    final need = ids.where((id) => !id.startsWith('local:') && !_artUrls.containsKey(id)).toSet().toList();
+    for (var i = 0; i < need.length; i += 500) {
+      try {
+        final r = await api.artUrls(need.sublist(i, min(i + 500, need.length)));
+        _artUrls.addAll(r.urls);
+        _artExp = _artExp == 0 ? r.exp : min(_artExp, r.exp);
+      } catch (_) {
+        return; // offline or slow: plain URLs
+      }
+    }
+  }
+
+  /// The best cover URL for a track right now, or null when it has none.
+  Uri? artUriFor(Track t) {
+    if (!t.hasArt || t.isLocal) return null;
+    return Uri.parse(_artUrls[t.id] ?? api.artUrl(t.id));
   }
 
   Future<void> sync() async {
@@ -153,6 +251,14 @@ class AppState extends ChangeNotifier {
         await _pullRatings();
       } catch (_) {
         // Ratings are best-effort; the library itself synced.
+      }
+      try {
+        await _flushPlays();
+        store.popular = await api.getPopular();
+        final mixes = await api.getMixes();
+        if (mixes.isNotEmpty) store.mixes = {for (final m in mixes) m.daypart: m};
+      } catch (_) {
+        // The car lists are best-effort too; the cached ones (or a local pick) are used.
       }
       message = null;
       await store.save();

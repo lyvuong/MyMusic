@@ -100,4 +100,27 @@ class ApiClient {
 
   Future<Suggestion> suggest(String prompt) async =>
       Suggestion.fromJson(await _send('POST', '/api/suggest', body: {'prompt': prompt}, timeout: const Duration(seconds: 90)) as Map<String, dynamic>);
+
+  /// Uploads plays (`{'id', 'at'}`); the server ignores songs it does not know.
+  Future<void> postPlays(List<Map<String, dynamic>> plays) => _send('POST', '/api/plays', body: {
+        'plays': [for (final p in plays) {'trackId': p['id'], 'at': p['at']}],
+      });
+
+  /// The family's play counts by track id.
+  Future<Map<String, int>> getPopular() async {
+    final j = await _send('GET', '/api/popular') as Map<String, dynamic>;
+    return {for (final t in j['tracks'] as List) (t as Map)['id'] as String: (t['plays'] as num).toInt()};
+  }
+
+  /// My nightly AI mixes.
+  Future<List<Mix>> getMixes() async {
+    final j = await _send('GET', '/api/mixes') as Map<String, dynamic>;
+    return [for (final m in j['mixes'] as List) Mix.fromJson(m as Map<String, dynamic>)];
+  }
+
+  /// Signed, car-sized cover URLs (no login header needed) and when they stop working (epoch seconds).
+  Future<({Map<String, String> urls, int exp})> artUrls(List<String> ids) async {
+    final j = await _send('POST', '/api/art-urls', body: {'ids': ids}, timeout: const Duration(seconds: 8)) as Map<String, dynamic>;
+    return (urls: (j['urls'] as Map).cast<String, String>(), exp: (j['exp'] as num).toInt());
+  }
 }

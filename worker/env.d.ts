@@ -15,5 +15,13 @@ interface Env {
   /** Public URL of the home server API (a Cloudflare Tunnel hostname). Empty = Beets features disabled. */
   HOME_API_URL?: string;
   /** Workers AI binding (free daily allowance); suggestions are disabled without it. */
+  /** Cloudflare Images binding: resizes covers for the car. Without it the original cover is served. */
+  IMAGES?: {
+    input(stream: ReadableStream): {
+      transform(o: { width?: number; height?: number; fit?: string }): {
+        output(o: { format: string; quality?: number }): Promise<{ response(): Response }>;
+      };
+    };
+  };
   AI?: { run(model: string, input: unknown): Promise<unknown> };
 }

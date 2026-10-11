@@ -32,6 +32,12 @@ Future<void> main() async {
       androidNotificationChannelId: 'org.lv5.mymusic.playback',
       androidNotificationChannelName: 'Music playback',
       androidNotificationIcon: 'drawable/ic_notification',
+      // Android Auto: songs as a list; folders opt in to a grid of covers (albums, playlists, artists, For You).
+      androidBrowsableRootExtras: {
+        AndroidContentStyle.supportedKey: true,
+        AndroidContentStyle.playableHintKey: AndroidContentStyle.listItemHintValue,
+        AndroidContentStyle.browsableHintKey: AndroidContentStyle.listItemHintValue,
+      },
     ),
   );
   audio.playError.addListener(() {

@@ -10,6 +10,9 @@ import { dispatchQueued } from "./ytqueue";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
 import { nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
+import { recordPlays, popular } from "./plays";
+import { buildAllMixes, getMixes } from "./mixes";
+import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
 
@@ -57,7 +60,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/cast/*"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/plays", "/api/popular", "/api/mixes", "/api/mixes/*", "/api/art-urls", "/api/cast/*"]) {
   app.use(p, needFamily);
 }
 
@@ -126,6 +129,51 @@ app.delete("/api/playlists/:id", async (c) => {
   await c.env.DB.prepare("UPDATE playlists SET deleted = 1, updated_at = ? WHERE id = ? AND owner_uid = ? AND family_id = ?")
     .bind(Date.now(), c.req.param("id"), c.get("user").uid, c.get("family").familyId).run();
   return c.json({ ok: true });
+});
+
+// ---- Plays, popularity and the nightly mixes ----------------------------------------------
+
+/** Plays to record: `[{ trackId, at }]`, `at` in epoch ms; the app sends them in batches after listening. */
+app.post("/api/plays", async (c) => {
+  const b = await c.req.json<{ plays?: { trackId: string; at: number }[] }>().catch(() => null);
+  if (!Array.isArray(b?.plays)) return c.json({ error: "bad request" }, 400);
+  return c.json({ saved: await recordPlays(c.env.DB, c.get("family").familyId, c.get("user").uid, b!.plays) });
+});
+
+/** The family's most played songs lately, most played first. */
+app.get("/api/popular", async (c) => c.json({ tracks: await popular(c.env.DB, c.get("family").familyId) }));
+
+/** The caller's AI mixes (one per time of day), built overnight. Empty until the first night run. */
+app.get("/api/mixes", async (c) => c.json({ mixes: await getMixes(c.env.DB, c.get("user").uid) }));
+
+/** Owner only: builds the mixes now instead of waiting for the night run (for testing). */
+app.post("/api/mixes/refresh", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  c.executionCtx.waitUntil(buildAllMixes(c.env, true).then((r) => console.log("mixes refreshed", r)));
+  return c.json({ ok: true });
+});
+
+/**
+ * Signed cover URLs, sized for the car (`?w=car`), for up to 500 tracks. Android Auto's image loader cannot send the
+ * login token, so every URL carries its own proof (valid 12 hours).
+ */
+app.post("/api/art-urls", async (c) => {
+  const b = await c.req.json<{ ids?: unknown }>().catch(() => null);
+  const ids = Array.isArray(b?.ids) ? [...new Set((b!.ids as unknown[]).filter((x): x is string => typeof x === "string"))].slice(0, 500) : [];
+  if (ids.length === 0) return c.json({ error: "bad request" }, 400);
+  const fam = c.get("family").familyId;
+  const have = new Set<string>();
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90);
+    const r = await c.env.DB.prepare(`SELECT id FROM tracks WHERE family_id = ? AND deleted = 0 AND art_key IS NOT NULL AND id IN (${part.map(() => "?").join(",")})`)
+      .bind(fam, ...part).all<{ id: string }>();
+    for (const row of r.results) have.add(row.id);
+  }
+  const origin = new URL(c.req.url).origin;
+  const exp = Math.floor(Date.now() / 1000) + 12 * 3600;
+  const urls: Record<string, string> = {};
+  for (const id of have) urls[id] = `${origin}/api/art/${id}?w=car&${await signedQuery(c.env.DB, "art", id, fam)}`;
+  return c.json({ urls, exp });
 });
 
 // ---- Ratings and AI suggestions -----------------------------------------------------------
@@ -547,6 +595,10 @@ app.get("/api/art/:id", async (c) => {
     .bind(c.req.param("id"), c.get("family").familyId).first<{ art_key: string | null }>();
   if (!row?.art_key) return c.json({ error: "not found" }, 404);
   if (row.art_key.startsWith("nas:")) return nasEnabled(c.env) ? proxyCover(c.env, row.art_key.slice(4)) : c.json({ error: "not found" }, 404);
+  if (c.req.query("w") === "car") {
+    const small = await carArt(c.env, c.get("family").familyId, c.req.param("id"), row.art_key);
+    if (small) return small;
+  }
   return serveR2(c.env.MUSIC, row.art_key, c.req.raw, { "Cache-Control": "private, max-age=86400" });
 });
 
@@ -563,4 +615,10 @@ app.get("/api/app/android/:file", (c) => {
   return serveR2(c.env.RELEASES, `android/${file}`, c.req.raw);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  /** Nightly: build every member's AI mixes for the next day (see wrangler.jsonc triggers). */
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(buildAllMixes(env).then((r) => console.log("nightly mixes", r)));
+  },
+};

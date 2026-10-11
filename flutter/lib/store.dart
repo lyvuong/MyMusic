@@ -21,6 +21,9 @@ class LocalStore {
   List<Map<String, String>> pending = []; // {'op': 'put'|'delete', 'id': playlistId}
   Map<String, int> ratings = {}; // my 1-5 star ratings by track id
   Map<String, int> pendingRatings = {}; // ratings not uploaded yet (0 = cleared)
+  List<Map<String, dynamic>> pendingPlays = []; // {'id': trackId, 'at': epoch ms} not uploaded yet
+  Map<String, int> popular = {}; // family play counts by track id
+  Map<String, Mix> mixes = {}; // my nightly AI mixes by day-part
 
   static Future<LocalStore> open() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -46,6 +49,9 @@ class LocalStore {
     pending = ((j['pending'] as List?) ?? []).map((e) => (e as Map).cast<String, String>()).toList();
     ratings = ((j['ratings'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toInt()));
     pendingRatings = ((j['pendingRatings'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toInt()));
+    pendingPlays = ((j['pendingPlays'] as List?) ?? []).map((e) => (e as Map).cast<String, dynamic>()).toList();
+    popular = ((j['popular'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toInt()));
+    mixes = {for (final m in (j['mixes'] as List? ?? [])) (m as Map<String, dynamic>)['daypart'] as String: Mix.fromJson(m)};
   }
 
   Future<void> save() async {
@@ -60,6 +66,9 @@ class LocalStore {
       'pending': pending,
       'ratings': ratings,
       'pendingRatings': pendingRatings,
+      'pendingPlays': pendingPlays,
+      'popular': popular,
+      'mixes': mixes.values.map((m) => m.toJson()).toList(),
     };
     final tmp = File('${_file.path}.tmp');
     await tmp.writeAsString(jsonEncode(j), flush: true);
@@ -77,5 +86,8 @@ class LocalStore {
     pending = [];
     ratings = {};
     pendingRatings = {};
+    pendingPlays = [];
+    popular = {};
+    mixes = {};
   }
 }

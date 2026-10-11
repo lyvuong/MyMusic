@@ -76,6 +76,8 @@ export async function removeMember(env: Env, uid: string): Promise<void> {
     db.prepare("DELETE FROM playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE owner_uid = ?)").bind(uid),
     db.prepare("DELETE FROM playlists WHERE owner_uid = ?").bind(uid),
     db.prepare("DELETE FROM ratings WHERE uid = ?").bind(uid),
+    db.prepare("DELETE FROM plays WHERE uid = ?").bind(uid),
+    db.prepare("DELETE FROM daily_mixes WHERE uid = ?").bind(uid),
     db.prepare("DELETE FROM members WHERE uid = ?").bind(uid),
   ]);
   const next = await db.prepare("SELECT uid FROM members WHERE family_id = ? ORDER BY joined_at LIMIT 1")
@@ -98,12 +100,16 @@ async function deleteFamily(env: Env, familyId: string) {
   const all = keys.results.flatMap((k) => (k.art_key ? [k.source_key, k.art_key] : [k.source_key]));
   for (let i = 0; i < all.length; i += 1000) await env.MUSIC.delete(all.slice(i, i + 1000));
   // Cached artist pictures are not tied to a track row.
-  const artists = await env.MUSIC.list({ prefix: `families/${familyId}/artist/`, limit: 1000 });
-  if (artists.objects.length) await env.MUSIC.delete(artists.objects.map((o) => o.key));
+  for (const sub of ["artist", "art-car"]) {
+    const cached = await env.MUSIC.list({ prefix: `families/${familyId}/${sub}/`, limit: 1000 });
+    if (cached.objects.length) await env.MUSIC.delete(cached.objects.map((o) => o.key));
+  }
   await env.DB.batch([
     env.DB.prepare("DELETE FROM playlist_tracks WHERE playlist_id IN (SELECT id FROM playlists WHERE family_id = ?)").bind(familyId),
     env.DB.prepare("DELETE FROM playlists WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM ratings WHERE family_id = ?").bind(familyId),
+    env.DB.prepare("DELETE FROM plays WHERE family_id = ?").bind(familyId),
+    env.DB.prepare("DELETE FROM daily_mixes WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM tracks WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM invites WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM families WHERE id = ?").bind(familyId),

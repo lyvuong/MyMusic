@@ -44,6 +44,16 @@
 	"ai": {
 		"binding": "AI"
 	},
+	// Resizes covers for Android Auto (cached in R2 by worker/carart.ts)
+	"images": {
+		"binding": "IMAGES"
+	},
+	// Nightly AI mixes for every member (worker/mixes.ts)
+	"triggers": {
+		"crons": [
+			"0 3 * * *"
+		]
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",

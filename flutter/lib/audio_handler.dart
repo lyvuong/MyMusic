@@ -6,15 +6,19 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
+import 'mixes.dart';
 import 'models.dart';
 import 'state.dart';
 
 /// The media session: notification and lock-screen controls, and the browse tree that Android
 /// Auto (and other MediaBrowser clients) show on the car screen.
 ///
-/// Browse tree (media ids): root -> dl | playlists | recent | albums | artists | all. Playable items
-/// are `t:<trackId>|<context>` so that picking a song on the car screen queues the whole list it
-/// was picked from (context `dl`, `all`, `recent`, `pl:<id>`, `al:<album>`, `ar:<artist>`).
+/// Browse tree (media ids): root -> foryou | albums | recent | library.
+///   foryou  -> `mix:daypart` | pop | top | redisc  (AI mix of the hour, popular, top rated, rediscover)
+///   library -> playlists | artists | dl | all
+/// Playable items are `t:<trackId>|<context>` so that picking a song on the car screen queues the whole
+/// list it was picked from (context `dl`, `all`, `recent`, `pl:id`, `al:album`, `ar:artist`,
+/// `mix:daypart`, `pop`, `top`, `redisc`). `play:context` and `shuffle:context` start a whole list.
 ///
 /// One track is loaded at a time (rather than a gapless playlist) so every track gets a fresh
 /// auth token and a downloaded file is preferred over streaming.
@@ -57,6 +61,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         MediaControl.skipToPrevious,
         if (playing) MediaControl.pause else MediaControl.play,
         MediaControl.skipToNext,
+        MediaControl.custom(
+          androidIcon: _loved ? 'drawable/ic_favorite' : 'drawable/ic_favorite_border',
+          label: _loved ? 'Loved' : 'Love',
+          name: 'love',
+        ),
         MediaControl.stop,
       ],
       systemActions: const {MediaAction.seek, MediaAction.seekForward, MediaAction.seekBackward},
@@ -85,6 +94,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     if (tracks.isEmpty) return;
     _tracks = tracks;
     final headers = await _artHeaders();
+    await app.ensureArtUrls(tracks.take(100).map((t) => t.id));
     _items = [for (final t in tracks) _item(t, headers)];
     queue.add(_items);
     _order = List.generate(tracks.length, (i) => i);
@@ -114,7 +124,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         artist: t.artist.isEmpty ? null : t.artist,
         album: t.album.isEmpty ? null : t.album,
         duration: t.duration > 0 ? Duration(milliseconds: (t.duration * 1000).round()) : null,
-        artUri: t.hasArt && !t.isLocal ? Uri.parse(app.api.artUrl(t.id)) : null,
+        artUri: app.artUriFor(t),
         artHeaders: headers,
         playable: true,
         extras: {'trackId': t.id},
@@ -231,8 +241,21 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   // ---- Browse tree (Android Auto) -----------------------------------------------------------
 
-  MediaItem _folder(String id, String title, {String? subtitle}) =>
-      MediaItem(id: id, title: title, displayDescription: subtitle, playable: false);
+  /// Hints for the car: folders under this one are shown as a grid of covers.
+  static const _gridChildren = {
+    AndroidContentStyle.supportedKey: true,
+    AndroidContentStyle.browsableHintKey: AndroidContentStyle.gridItemHintValue,
+    AndroidContentStyle.playableHintKey: AndroidContentStyle.listItemHintValue,
+  };
+
+  MediaItem _folder(String id, String title, {String? subtitle, Track? art, bool grid = false}) => MediaItem(
+        id: id,
+        title: title,
+        displayDescription: subtitle,
+        artUri: art == null ? null : app.artUriFor(art),
+        playable: false,
+        extras: grid ? _gridChildren : null,
+      );
 
   static String _enc(String s) => Uri.encodeComponent(s);
 
@@ -241,6 +264,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final all = app.allTracks;
     if (ctx == 'dl') return [...app.downloadedTracks, ...app.store.phoneTracks.values];
     if (ctx == 'recent') return app.recentTracks;
+    if (ctx == 'pop') return app.popularTracks;
+    if (ctx == 'top') return app.topRatedTracks;
+    if (ctx == 'redisc') return app.rediscoverTracks;
+    if (ctx.startsWith('mix:')) return app.mixFor(ctx.substring(4)).tracks;
     if (ctx.startsWith('pl:')) {
       final p = app.store.playlists[ctx.substring(3)];
       return p == null ? [] : app.tracksOf(p);
@@ -256,31 +283,127 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     return all;
   }
 
-  @override
-  Future<List<MediaItem>> getChildren(String parentMediaId, [Map<String, dynamic>? options]) async {
-    if (parentMediaId == AudioService.browsableRootId) {
-      return [
-        _folder('dl', 'Downloaded', subtitle: 'Plays offline'),
-        _folder('playlists', 'Playlists'),
+  /// First track of [tracks] that has a cover, to stand in for a folder's picture.
+  static Track? _artOf(Iterable<Track> tracks) {
+    for (final t in tracks) {
+      if (t.hasArt && !t.isLocal) return t;
+    }
+    return null;
+  }
+
+  List<MediaItem> _rootFolders() => [
+        _folder('foryou', 'For You', subtitle: '${greetingFor(daypartOf(DateTime.now()))} mix, popular, top rated', grid: true),
+        _folder('albums', 'Albums', grid: true),
         _folder('recent', 'Recently played'),
-        _folder('albums', 'Albums'),
-        _folder('artists', 'Artists'),
+        _folder('library', 'Library', subtitle: 'Playlists, artists, downloads, all songs'),
+      ];
+
+  List<MediaItem> _forYou() {
+    final dp = daypartOf(DateTime.now());
+    final mix = app.mixFor(dp);
+    final pop = app.popularTracks;
+    final top = app.topRatedTracks;
+    final redisc = app.rediscoverTracks;
+    return [
+      _folder('mix:$dp', mix.title, subtitle: mix.subtitle, art: _artOf(mix.tracks)),
+      if (pop.isNotEmpty) _folder('pop', 'Popular with the family', subtitle: '${pop.length} songs', art: _artOf(pop)),
+      if (top.isNotEmpty) _folder('top', 'Your top rated', subtitle: '${top.length} songs', art: _artOf(top)),
+      if (redisc.length >= 5) _folder('redisc', 'Rediscover', subtitle: 'Loved songs you have not heard lately', art: _artOf(redisc)),
+    ];
+  }
+
+  List<MediaItem> _library() => [
+        _folder('playlists', 'Playlists', grid: true),
+        _folder('artists', 'Artists', grid: true),
+        _folder('dl', 'Downloaded', subtitle: 'Plays offline'),
         _folder('all', 'All songs'),
       ];
+
+  /// Albums by artist then title, each with its cover and artist.
+  List<MediaItem> _albumFolders() {
+    final byAlbum = <String, List<Track>>{};
+    for (final t in app.allTracks) {
+      if (t.album.isNotEmpty) (byAlbum[t.album] ??= []).add(t);
     }
-    switch (parentMediaId) {
-      case 'playlists':
-        return [for (final p in app.playlists) _folder('pl:${p.id}', p.name, subtitle: '${p.trackIds.length} songs')];
+    final entries = byAlbum.entries.map((e) {
+      final artists = {for (final t in e.value) if (t.artist.isNotEmpty) t.artist};
+      return (name: e.key, artist: artists.length == 1 ? artists.first : (artists.isEmpty ? '' : 'Various artists'), tracks: e.value);
+    }).toList()
+      ..sort((a, b) {
+        final c = a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
+        return c != 0 ? c : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    return [for (final a in entries) _folder('al:${_enc(a.name)}', a.name, subtitle: a.artist, art: _artOf(a.tracks))];
+  }
+
+  List<MediaItem> _artistFolders() {
+    final by = <String, List<Track>>{};
+    for (final t in app.allTracks) {
+      if (t.artist.isNotEmpty) (by[t.artist] ??= []).add(t);
+    }
+    final names = by.keys.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return [for (final a in names) _folder('ar:${_enc(a)}', a, subtitle: '${by[a]!.length} songs', art: _artOf(by[a]!))];
+  }
+
+  List<MediaItem> _playlistFolders() => [
+        for (final p in app.playlists) _folder('pl:${p.id}', p.name, subtitle: '${p.trackIds.length} songs', art: _artOf(app.tracksOf(p))),
+      ];
+
+  /// The track whose cover stands in for each album / artist / playlist folder, for one batch of signed URLs.
+  List<String> _folderArtIds(String folder) {
+    final groups = <String, Track>{};
+    switch (folder) {
       case 'albums':
-        final albums = {for (final t in app.allTracks) if (t.album.isNotEmpty) t.album}.toList()..sort();
-        return [for (final a in albums) _folder('al:${_enc(a)}', a)];
+        for (final t in app.allTracks) {
+          if (t.album.isNotEmpty && t.hasArt && !t.isLocal) groups.putIfAbsent(t.album, () => t);
+        }
       case 'artists':
-        final artists = {for (final t in app.allTracks) if (t.artist.isNotEmpty) t.artist}.toList()..sort();
-        return [for (final a in artists) _folder('ar:${_enc(a)}', a)];
+        for (final t in app.allTracks) {
+          if (t.artist.isNotEmpty && t.hasArt && !t.isLocal) groups.putIfAbsent(t.artist, () => t);
+        }
+      case 'playlists':
+        for (final p in app.playlists) {
+          final t = _artOf(app.tracksOf(p));
+          if (t != null) groups[p.id] = t;
+        }
     }
+    return [for (final t in groups.values) t.id];
+  }
+
+  @override
+  Future<List<MediaItem>> getChildren(String parentMediaId, [Map<String, dynamic>? options]) async {
+    if (parentMediaId == AudioService.browsableRootId) return _rootFolders();
+    // Car covers need signed URLs: fetch them for what this folder shows (one request), then build the items.
+    switch (parentMediaId) {
+      case 'library':
+        return _library();
+      case 'foryou':
+        final dp = daypartOf(DateTime.now());
+        await app.ensureArtUrls([...app.mixFor(dp).tracks, ...app.popularTracks, ...app.topRatedTracks].take(60).map((t) => t.id));
+        return _forYou();
+      case 'albums':
+        await app.ensureArtUrls(_folderArtIds('albums'));
+        return _albumFolders();
+      case 'artists':
+        await app.ensureArtUrls(_folderArtIds('artists'));
+        return _artistFolders();
+      case 'playlists':
+        await app.ensureArtUrls(_folderArtIds('playlists'));
+        return _playlistFolders();
+    }
+    final tracks = _context(parentMediaId);
+    final shown = tracks.take(500).toList();
+    await app.ensureArtUrls(shown.map((t) => t.id));
     final headers = await _artHeaders();
-    // Car screens cap long lists anyway; keep the payload small.
-    return [for (final t in _context(parentMediaId).take(300)) _item(t, headers, ctx: parentMediaId)];
+    final cover = _artOf(shown);
+    final coverUri = cover == null ? null : app.artUriFor(cover);
+    return [
+      if (shown.length > 1 && parentMediaId != 'all') ...[
+        MediaItem(id: 'play:$parentMediaId', title: 'Play all', displayDescription: '${tracks.length} songs', artUri: coverUri, playable: true),
+        MediaItem(id: 'shuffle:$parentMediaId', title: 'Shuffle', artUri: coverUri, playable: true),
+      ],
+      for (final t in shown) _item(t, headers, ctx: parentMediaId),
+    ];
   }
 
   @override
@@ -296,6 +419,13 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> playFromMediaId(String mediaId, [Map<String, dynamic>? extras]) async {
+    if (mediaId.startsWith('play:') || mediaId.startsWith('shuffle:')) {
+      final shuffle = mediaId.startsWith('shuffle:');
+      final list = [..._context(mediaId.substring(mediaId.indexOf(':') + 1))];
+      if (shuffle) list.shuffle(_rng);
+      await playQueue(list, 0);
+      return;
+    }
     final id = _trackIdOf(mediaId);
     final bar = mediaId.indexOf('|');
     final list = bar < 0 ? <Track>[] : _context(mediaId.substring(bar + 1));
@@ -307,6 +437,28 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     } else {
       await playQueue(list, index);
     }
+  }
+
+  // ---- Love (5 stars) from the car, which feeds the AI mixes --------------------------------
+
+  String? get _currentId => _pos < 0 || _pos >= _order.length ? null : _tracks[_order[_pos]].id;
+
+  bool get _loved {
+    final id = _currentId;
+    return id != null && app.ratingOf(id) >= 5;
+  }
+
+  @override
+  Future<dynamic> customAction(String name, [Map<String, dynamic>? extras]) async {
+    if (name == 'love') {
+      final id = _currentId;
+      if (id != null) {
+        await app.rate(id, _loved ? 0 : 5);
+        _broadcast();
+      }
+      return null;
+    }
+    return super.customAction(name, extras);
   }
 
   // ---- Search / voice ("Hey Google, play ...") ----------------------------------------------
