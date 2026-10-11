@@ -14,7 +14,7 @@ export interface EditField {
 }
 
 /** Lowercase, no diacritics (đ -> d), words separated by single spaces: "Hương  Cần" and "huong can" compare equal. */
-const fold = (s: string) =>
+export const fold = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 /** Existing names that match a partial entry, best first: starts with it, has every typed word start, contains it,

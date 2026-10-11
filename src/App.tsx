@@ -1,9 +1,10 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, Track, YoutubeInfo } from "../shared/types";
 import { api } from "./api";
 import { AiBadge, ArtistPic, Cover } from "./art";
 import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } from "./browse";
+import { buildIndex, searchTracks } from "./search";
 import { CoverPick } from "./CoverPick";
 import { EditDialog } from "./EditDialog";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
@@ -182,14 +183,28 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
   useLayoutEffect(() => {
     window.scrollTo(0, open ? 0 : listScroll.current);
   }, [open]);
-  const filtered = useMemo(() => {
-    const s = q.toLowerCase();
-    return tracks.filter((t) => !s || `${t.title} ${t.artist} ${t.album}`.toLowerCase().includes(s));
-  }, [tracks, q]);
-  const songs = useMemo(() => [...filtered].sort((a, b) => a.title.localeCompare(b.title)), [filtered]);
-  const albums = useMemo(() => groupAlbums(filtered), [filtered]);
-  const artists = useMemo(() => groupArtists(filtered), [filtered]);
+  // Typing stays instant: the lists below follow a deferred copy of the text, and only the visible view is built.
+  const dq = useDeferredValue(q);
+  const index = useMemo(() => buildIndex(tracks), [tracks]);
+  const byTitle = useMemo(() => [...tracks].sort((a, b) => a.title.localeCompare(b.title)), [tracks]);
+  const filtered = useMemo(() => searchTracks(byTitle, index, dq), [byTitle, index, dq]);
+  const songs = filtered;
+  const albums = useMemo(() => (view === "albums" ? groupAlbums(filtered) : []), [filtered, view]);
+  const artists = useMemo(() => (view === "artists" ? groupArtists(filtered) : []), [filtered, view]);
+  const counts = useMemo(
+    () => ({
+      albums: new Set(filtered.map((t) => t.album).filter(Boolean)).size,
+      artists: new Set(filtered.map((t) => t.artist).filter(Boolean)).size,
+      songs: filtered.length,
+    }),
+    [filtered],
+  );
   const recent = useMemo(() => [...albums].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12), [albums]);
+  // A long result list is shown in pages, so a broad search does not build thousands of rows at once.
+  const PAGE = 100;
+  const [shown, setShown] = useState(PAGE);
+  useEffect(() => setShown(PAGE), [dq, view]);
+  const more = (n: number) => n > shown && <p><button className="link" onClick={() => setShown((s) => s + PAGE)}>Show {Math.min(PAGE, n - shown)} more of {n - shown}</button></p>;
   const detailAlbum = useMemo(() => (open?.kind === "album" ? groupAlbums(tracks).find((a) => a.key === open.key) : undefined), [tracks, open]);
   const detailArtist = useMemo(() => (open?.kind === "artist" ? groupArtists(tracks).find((a) => a.name === open.key) : undefined), [tracks, open]);
   const mine = playlists.filter((p) => p.ownerUid === uid);
@@ -439,14 +454,17 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
   }
 
   const views: [View, string][] = [["albums", "Albums"], ["artists", "Artists"], ["songs", "Songs"]];
+  const noMatch = `Nothing matches "${dq.trim()}". Words can be in any order, and accents and capitals do not matter.`;
   return (
     <div className={view === "songs" ? undefined : "wide"}>
       {dialog}
       {toastEl}
-      <div className="search-box">
+      <div className="search-box" aria-busy={q !== dq}>
         <input
           className="search"
-          placeholder="Search your music"
+          placeholder="Search songs, artists, albums"
+          enterKeyHint="search"
+          autoComplete="off"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && setQ("")}
@@ -455,7 +473,9 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
       </div>
       <div className="seg" role="tablist">
         {views.map(([k, label]) => (
-          <button key={k} role="tab" aria-selected={view === k} className={view === k ? "active" : ""} onClick={() => setView(k)}>{label}</button>
+          <button key={k} role="tab" aria-selected={view === k} className={view === k ? "active" : ""} onClick={() => setView(k)}>
+            {label}{dq.trim() && <small> {counts[k]}</small>}
+          </button>
         ))}
       </div>
       {tracks.some((t) => !t.hasArt && t.source === "r2") && (
@@ -477,24 +497,28 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
             </section>
           )}
           <div className="grid">
-            {albums.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => openItem({ kind: "album", key: a.key })} />)}
+            {albums.slice(0, shown).map((a) => <AlbumCard key={a.key} album={a} onOpen={() => openItem({ kind: "album", key: a.key })} />)}
           </div>
-          {albums.length === 0 && <p className="muted">No albums match.</p>}
+          {more(albums.length)}
+          {albums.length === 0 && <p className="muted">{noMatch}</p>}
         </>
       ) : view === "artists" ? (
         <>
           <div className="grid">
-            {artists.map((a) => <ArtistCard key={a.name} artist={a} onOpen={() => openItem({ kind: "artist", key: a.name })} />)}
+            {artists.slice(0, shown).map((a) => <ArtistCard key={a.name} artist={a} onOpen={() => openItem({ kind: "artist", key: a.name })} />)}
           </div>
-          {artists.length === 0 && <p className="muted">No artists match.</p>}
+          {more(artists.length)}
+          {artists.length === 0 && <p className="muted">{noMatch}</p>}
         </>
       ) : (
         <>
           {selectBar(songs)}
           <p className="muted">{songCount(songs.length)} {selectLink}</p>
           <ul>
-            {songs.map((t) => <TrackRow key={t.id} t={t} queue={songs} extra={selecting ? undefined : rowExtra(t)} select={rowSelect(t)} />)}
+            {songs.slice(0, shown).map((t) => <TrackRow key={t.id} t={t} queue={songs} extra={selecting ? undefined : rowExtra(t)} select={rowSelect(t)} />)}
           </ul>
+          {more(songs.length)}
+          {songs.length === 0 && <p className="muted">{noMatch}</p>}
         </>
       )}
     </div>

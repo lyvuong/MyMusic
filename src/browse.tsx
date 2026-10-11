@@ -22,7 +22,7 @@ const byTrackNo = (a: Track, b: Track) => a.trackNo - b.trackNo || a.title.local
 /** Albums are the distinct album names (like the phone app); songs without an album tag are left out. */
 export function groupAlbums(tracks: Track[]): Album[] {
   const m = new Map<string, Track[]>();
-  for (const t of tracks) if (t.album) m.set(t.album, [...(m.get(t.album) ?? []), t]);
+  for (const t of tracks) if (t.album) (m.get(t.album) ?? m.set(t.album, []).get(t.album)!).push(t);
   return [...m].map(([name, list]) => {
     const sorted = list.sort(byTrackNo);
     const artists = new Set(sorted.map((t) => t.artist).filter(Boolean));
@@ -39,7 +39,7 @@ export function groupAlbums(tracks: Track[]): Album[] {
 
 export function groupArtists(tracks: Track[]): Artist[] {
   const m = new Map<string, Track[]>();
-  for (const t of tracks) if (t.artist) m.set(t.artist, [...(m.get(t.artist) ?? []), t]);
+  for (const t of tracks) if (t.artist) (m.get(t.artist) ?? m.set(t.artist, []).get(t.artist)!).push(t);
   return [...m]
     .map(([name, list]) => ({ name, tracks: list.sort((a, b) => a.album.localeCompare(b.album) || byTrackNo(a, b)) }))
     .sort((a, b) => a.name.localeCompare(b.name));
