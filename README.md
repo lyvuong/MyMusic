@@ -123,6 +123,8 @@ One-time setup:
      container_name: watchtower
      restart: unless-stopped
      command: --label-enable --interval 300 --cleanup
+     environment:
+       - DOCKER_API_VERSION=1.44   # Watchtower's built-in client is too old for current Docker ("client version 1.25 is too old")
      volumes:
        - /var/run/docker.sock:/var/run/docker.sock
    ```
