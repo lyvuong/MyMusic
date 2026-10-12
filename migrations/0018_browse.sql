@@ -1,7 +1,9 @@
 -- Browsing by search, genre and "recently added" without reading the whole library.
 --  * genre: filled by the NAS sync.
---  * tracks_fts: a full-text index over title, artist, album and genre (accents ignored; d with stroke is written as d
---    because the tokenizer does not decompose it). The triggers keep it in step with the tracks table.
+--  * tracks_fts: a full-text index over title, artist and album (accents ignored; d with stroke is written as d because
+--    the tokenizer does not decompose it). The triggers keep it in step with the tracks table. Genre is not in it: it is
+--    filtered by the column, and leaving it out keeps the first genre sync from rewriting every index entry (the free
+--    plan allows 100k row writes a day).
 --  * family_cache: lists that are expensive to build and fine to be a few hours old (genres, most played).
 --  * members.last_seen_at: the nightly mixes are not rebuilt for somebody who has not opened the app since the last one.
 ALTER TABLE tracks ADD COLUMN genre TEXT NOT NULL DEFAULT '';
@@ -25,26 +27,26 @@ CREATE TABLE family_cache (
   PRIMARY KEY (family_id, key)
 );
 
-CREATE VIRTUAL TABLE tracks_fts USING fts5(title, artist, album, genre, tokenize = 'unicode61 remove_diacritics 2');
+CREATE VIRTUAL TABLE tracks_fts USING fts5(title, artist, album, tokenize = 'unicode61 remove_diacritics 2');
 
-INSERT INTO tracks_fts (rowid, title, artist, album, genre)
+INSERT INTO tracks_fts (rowid, title, artist, album)
 SELECT rowid, replace(replace(title, 'đ', 'd'), 'Đ', 'D'), replace(replace(artist, 'đ', 'd'), 'Đ', 'D'),
-       replace(replace(album, 'đ', 'd'), 'Đ', 'D'), replace(replace(genre, 'đ', 'd'), 'Đ', 'D')
+       replace(replace(album, 'đ', 'd'), 'Đ', 'D')
 FROM tracks;
 
 CREATE TRIGGER tracks_fts_insert AFTER INSERT ON tracks BEGIN
-  INSERT INTO tracks_fts (rowid, title, artist, album, genre)
+  INSERT INTO tracks_fts (rowid, title, artist, album)
   VALUES (new.rowid, replace(replace(new.title, 'đ', 'd'), 'Đ', 'D'), replace(replace(new.artist, 'đ', 'd'), 'Đ', 'D'),
-          replace(replace(new.album, 'đ', 'd'), 'Đ', 'D'), replace(replace(new.genre, 'đ', 'd'), 'Đ', 'D'));
+          replace(replace(new.album, 'đ', 'd'), 'Đ', 'D'));
 END;
 
-CREATE TRIGGER tracks_fts_update AFTER UPDATE OF title, artist, album, genre ON tracks
-WHEN old.title IS NOT new.title OR old.artist IS NOT new.artist OR old.album IS NOT new.album OR old.genre IS NOT new.genre
+CREATE TRIGGER tracks_fts_update AFTER UPDATE OF title, artist, album ON tracks
+WHEN old.title IS NOT new.title OR old.artist IS NOT new.artist OR old.album IS NOT new.album
 BEGIN
   DELETE FROM tracks_fts WHERE rowid = old.rowid;
-  INSERT INTO tracks_fts (rowid, title, artist, album, genre)
+  INSERT INTO tracks_fts (rowid, title, artist, album)
   VALUES (new.rowid, replace(replace(new.title, 'đ', 'd'), 'Đ', 'D'), replace(replace(new.artist, 'đ', 'd'), 'Đ', 'D'),
-          replace(replace(new.album, 'đ', 'd'), 'Đ', 'D'), replace(replace(new.genre, 'đ', 'd'), 'Đ', 'D'));
+          replace(replace(new.album, 'đ', 'd'), 'Đ', 'D'));
 END;
 
 CREATE TRIGGER tracks_fts_delete AFTER DELETE ON tracks BEGIN

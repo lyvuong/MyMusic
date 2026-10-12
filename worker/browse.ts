@@ -69,7 +69,7 @@ export async function browse(
     const r = await db.prepare(
       "SELECT t.*, t.rowid AS rid FROM tracks_fts JOIN tracks t ON t.rowid = tracks_fts.rowid " +
         `WHERE tracks_fts MATCH ? AND t.family_id = ? AND t.deleted = 0${genre ? " AND t.genre = ?" : ""} ` +
-        "ORDER BY bm25(tracks_fts, 8, 4, 3, 1), t.rowid DESC LIMIT ? OFFSET ?",
+        "ORDER BY bm25(tracks_fts, 8, 4, 3), t.rowid DESC LIMIT ? OFFSET ?",
     ).bind(match, familyId, ...(genre ? [genre] : []), limit + 1, offset).all<TrackRow & { rid: number }>();
     const more = r.results.length > limit && offset + limit < MAX_OFFSET;
     return { tracks: r.results.slice(0, limit).map(toTrack), next: more ? offset + limit : null };

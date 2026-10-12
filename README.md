@@ -221,6 +221,18 @@ Each edit is sent to the home server API first, which writes the tags into the f
 
 An album page has **🖼 Add cover** (or **Replace cover** when it has one). The browser scales the picked image to at most 1000 px and sends it as JPEG; the Worker has the home server write it as `cover.jpg` into the folder(s) of the album's songs (an existing `cover.*`, `folder.*` or `front.*` image is kept as `old-<name>`), stores a copy in R2 so the cover shows at once, and starts a Navidrome scan. The next the library sync (it runs after every import) replaces the R2 copy with Navidrome's own. A folder that also holds songs of other albums gets no folder image (it would apply to all of them): the cover is embedded in that album's own song files instead (Navidrome shows embedded art only when the folder has no `cover.*`/`folder.*`/`front.*` image; the app warns when it has one). Like name edits, this is refused with the reason when the home server cannot be reached (albums made only of app uploads do not need it). The `mymusic-api` log is `/mnt/user/appdata/beets/tag-edits.log`.
 
+## Browsing without reading the library (web app)
+
+The web app never loads the whole library. A library is thousands of songs and every one is a D1 row read (the free plan allows 5 million row reads a day), so the page asks for what it shows:
+
+- **Home** (`GET /api/home`): the member's nightly mixes, the newest songs grouped into albums, the family's most played songs, their own 4-5 star songs and "rediscover" (loved, not played for 60 days), and the genres. A few hundred rows however large the library is. The lists that need a scan (genres, most played) are kept for 6 hours in `family_cache`, the member's own lists for 3 hours; a sync, an upload or a delete clears the family ones.
+- **Library** (`GET /api/browse`): newest first by default, `q` searches, `genre` narrows, `cursor` pages. Search uses a full-text index (`tracks_fts`, migration `0018`, kept in step by triggers) that ignores accents, capitals and word order and treats each typed word as a prefix, so `con yeu` finds "Còn Yêu Em Mãi". An album or artist page asks for its own songs (`GET /api/group`); the edit dialogs look up existing names while you type (`GET /api/names`).
+- **Playlists and mixes** only hold ids; the page fetches the songs it needs (`POST /api/tracks/by-ids`) and after that only the songs that changed (`GET /api/library?since=`, `?tracks=0` for playlists and the clock only).
+- The Vietnamese name fixer is the one tool that looks at every name; it reads the whole library once when you open it.
+- `genre` comes from the NAS sync (Navidrome's tags). `tests` in `worker/browse.test.ts` run the real migrations in SQLite and check the query plans, so a query that would scan the library fails the test.
+
+**Mixes are only rebuilt for people who opened the app.** The nightly run (below) skips a member whose last mix is newer than their last visit (`members.last_seen_at`, set at most once an hour when the app asks for the library, the home page or the mixes), so an unused account costs nothing and its mix is simply reused.
+
 ## Ratings and AI suggestions
 
 Every member rates songs 1-5 stars (web: stars on each row and in the player bar; phone: the song menu -> **Rate...** and the stars on the now-playing screen; tap the current star again to clear). Ratings are per person (table `ratings`, migration `0008_ratings.sql`) and the phone queues them while offline.

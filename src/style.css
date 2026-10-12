@@ -222,3 +222,16 @@ fieldset { border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; }
 .fixv-list li.fresh { outline: 2px solid var(--accent); outline-offset: -2px; }
 .job { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .job .spinner { margin: 0 .5em 0 0; }
+
+/* Start page and the Library filters */
+.home h2 { margin: 22px 0 8px; font-size: 1.15rem; }
+form.search-box { display: flex; gap: 8px; align-items: center; }
+form.search-box .search { padding-right: 16px; }
+.songlist { width: 100%; margin: 0 0 12px; }
+.songlist.now { border-color: var(--accent); }
+.songlist-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.songlist-head h3 { margin: 0; }
+.songlist ul { margin: 4px 0; }
+.seg.wrap { flex-wrap: wrap; overflow: visible; }
+.filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.filters .seg { margin: 0; }

@@ -13,6 +13,8 @@ export interface EditField {
   required?: boolean;
   /** A tick box: the value is "1" when ticked, "" when not. */
   checkbox?: boolean;
+  /** Asks the server for existing names matching what is typed (the library is not in the page to pick from). */
+  lookup?: (typed: string) => Promise<string[]>;
   /** Shows "Add accents": asks the AI to restore Vietnamese accents on this one name. */
   accents?: boolean;
   /** What the name is, sent to the AI as a hint (a field keyed title, artist or album implies it). */
@@ -73,6 +75,24 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [busy, onClose]);
+
+  // Names from the server for the field being typed in, a moment after the typing stops.
+  const [found, setFound] = useState<Record<string, string[]>>({});
+  const lookups = useRef<Record<string, EditField["lookup"]>>({});
+  lookups.current = Object.fromEntries(fields.map((f) => [f.key, f.lookup]));
+  const typedNow = focus ? values[focus] : undefined;
+  useEffect(() => {
+    const look = focus ? lookups.current[focus] : undefined;
+    if (!focus || !look || !typedNow || !typedNow.trim()) return;
+    let live = true;
+    const t = window.setTimeout(() => {
+      look(typedNow).then((names) => live && setFound((f) => ({ ...f, [focus]: names }))).catch(() => undefined);
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(t);
+    };
+  }, [focus, typedNow]);
 
   const h = hint?.(values) ?? null;
   const missing = fields.some((f) => f.required && !values[f.key]!.trim());
@@ -139,10 +159,10 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
               onFocus={() => setFocus(f.key)}
               onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
             />
-            {f.options && focus === f.key && (() => {
+            {(f.options || f.lookup) && focus === f.key && (() => {
               // Before anything is typed, offer names similar to the current one (same words without accents or case).
               const typed = values[f.key]!;
-              const list = suggest(f.options, typed).filter((o) => o !== f.value);
+              const list = suggest([...(f.options ?? []), ...(found[f.key] ?? [])], typed).filter((o) => o !== f.value);
               return list.length > 0 && (
                 <span className="suggest" role="listbox" aria-label={`Matching ${f.label.toLowerCase()}s`}>
                   {list.map((o) => (

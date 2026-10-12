@@ -1,19 +1,20 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, Track, YoutubeInfo } from "../shared/types";
 import { api } from "./api";
 import { AiBadge, ArtistPic, Cover } from "./art";
 import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } from "./browse";
-import { buildIndex, searchTracks } from "./search";
 import { CoverPick } from "./CoverPick";
 import { EditDialog } from "./EditDialog";
 import { FixVietnamese } from "./FixVietnamese";
+import { Home, useHome, type Jump } from "./Home";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
-import { RatingsProvider, Stars } from "./ratings";
-import { useLibrary } from "./useLibrary";
+import { RatingsProvider } from "./ratings";
+import { TrackRow } from "./TrackRow";
+import { useLibrary, type Library as LibraryState } from "./useLibrary";
 
-type Tab = "library" | "foryou" | "playlists" | "tools" | "family";
+type Tab = "home" | "library" | "foryou" | "playlists" | "tools" | "family";
 
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = still loading
@@ -90,8 +91,14 @@ function FamilySetup({ onDone }: { onDone: (f: FamilyInfo) => void }) {
 }
 
 function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo; reloadFamily: () => Promise<void> }) {
-  const [tab, setTab] = useState<Tab>("library");
+  const [tab, setTab] = useState<Tab>("home");
   const lib = useLibrary(true);
+  // The start page sends the Library tab to a search, a genre or one album.
+  const [jump, setJump] = useState<Jump | null>(null);
+  const goLibrary = (j: Omit<Jump, "n">) => {
+    setJump({ ...j, n: Date.now() });
+    setTab("library");
+  };
   // Editing names, Organize and enrich need the home server; they are disabled (with the reason) while it is unreachable.
   const [home, setHome] = useState<ServerStatus | null>(null);
   const checkHome = useCallback(async () => {
@@ -112,7 +119,7 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
   }, [checkHome]);
   // Adding and fixing songs is the owner's job, so only the owner gets the Library tools tab.
   const tabs: [Tab, string][] = [
-    ["library", "Library"], ["foryou", "For you"], ["playlists", "Playlists"],
+    ["home", "Home"], ["library", "Library"], ["foryou", "For you"], ["playlists", "Playlists"],
     ...(family.role === "owner" ? [["tools", "Library tools"] as [Tab, string]] : []),
     ["family", "Family"],
   ];
@@ -139,10 +146,11 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
         </nav>
       </header>
       <main>
-        {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} home={home} isOwner={family.role === "owner"} openTools={() => setTab("tools")} />}
+        {tab === "home" && <Home lib={lib} isOwner={family.role === "owner"} go={goLibrary} />}
+        {tab === "library" && <Library lib={lib} uid={user.uid} home={home} isOwner={family.role === "owner"} openTools={() => setTab("tools")} jump={jump} />}
         {tab === "foryou" && <ForYou lib={lib} />}
         {tab === "playlists" && <Playlists lib={lib} uid={user.uid} />}
-        {tab === "tools" && family.role === "owner" && <LibraryTools refresh={lib.refresh} home={home} recheck={checkHome} tracks={[...lib.tracks.values()]} />}
+        {tab === "tools" && family.role === "owner" && <LibraryTools lib={lib} home={home} recheck={checkHome} />}
         {tab === "family" && <Family family={family} uid={user.uid} reload={reloadFamily} />}
       </main>
       <PlayerBar />
@@ -150,37 +158,25 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
   );
 }
 
-function TrackRow({ t, queue, extra, number, hideArtist, select, note }: { t: Track; queue: Track[]; extra?: React.ReactNode; number?: number; hideArtist?: boolean; select?: { picked: boolean; toggle: () => void }; note?: string }) {
-  const p = usePlayer();
-  const active = p.current?.id === t.id;
-  const mins = Math.floor(t.duration / 60);
-  return (
-    <li className={`row${active ? " active" : ""}${select?.picked ? " picked" : ""}`} onClick={select?.toggle}>
-      {select && <input className="pick" type="checkbox" checked={select.picked} onChange={select.toggle} onClick={(e) => e.stopPropagation()} aria-label={`Select ${t.title}`} />}
-      <button className="lead" onClick={select ? undefined : () => p.play(queue, queue.findIndex((x) => x.id === t.id))} aria-label={`Play ${t.title}`}>
-        {number === undefined ? <Cover track={t} seed={t.album || t.title} className="sm" /> : <span className="num">{number || "–"}</span>}
-        <span className="badge">{active && p.playing ? "♪" : "▶"}</span>
-      </button>
-      <span className="grow">
-        <strong>{t.title}{t.ai && <> <AiBadge /></>}</strong>
-        <small>{[hideArtist ? "" : t.artist, number === undefined ? t.album : ""].filter(Boolean).join(" · ")}</small>
-        {note && <small className="muted">{note}</small>}
-      </span>
-      {t.duration > 0 && <small className="dur">{mins}:{String(Math.floor(t.duration % 60)).padStart(2, "0")}</small>}
-      {!select && <Stars trackId={t.id} title={t.title} />}
-      {extra}
-    </li>
-  );
-}
-
 type View = "albums" | "artists" | "songs";
 
-function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: { tracks: Track[]; playlists: Playlist[]; uid: string; refresh: () => Promise<void>; home: ServerStatus | null; isOwner: boolean; openTools: () => void }) {
+function Library({ lib, uid, home, isOwner, openTools, jump }: { lib: LibraryState; uid: string; home: ServerStatus | null; isOwner: boolean; openTools: () => void; jump: Jump | null }) {
+  const { refresh } = lib;
+  const playlists = useMemo(() => [...lib.playlists.values()], [lib.playlists]);
   const canEdit = home?.ok !== false;
   const editOff = home && !home.ok ? `Editing names is unavailable: ${home.error}` : "";
   const [q, setQ] = useState("");
+  const [genre, setGenre] = useState("");
   const [view, setView] = useState<View>("albums");
   const [open, setOpen] = useState<{ kind: "album" | "artist"; key: string } | null>(null);
+  // Sent here from the start page: a search, a genre, or an album to open.
+  useEffect(() => {
+    if (!jump) return;
+    setQ(jump.q ?? "");
+    setGenre(jump.genre ?? "");
+    setOpen(jump.open ?? null);
+    if (jump.q || jump.genre) setView("songs");
+  }, [jump]);
   // The list unmounts while an album or artist is open, so remember where it was scrolled to and go back there.
   const listScroll = useRef(0);
   const openItem = (o: { kind: "album" | "artist"; key: string }) => {
@@ -190,40 +186,74 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
   useLayoutEffect(() => {
     window.scrollTo(0, open ? 0 : listScroll.current);
   }, [open]);
-  // Typing stays instant: the lists below follow a deferred copy of the text, and only the visible view is built.
-  const dq = useDeferredValue(q);
-  const index = useMemo(() => buildIndex(tracks), [tracks]);
-  const byTitle = useMemo(() => [...tracks].sort((a, b) => a.title.localeCompare(b.title)), [tracks]);
-  const filtered = useMemo(() => searchTracks(byTitle, index, dq), [byTitle, index, dq]);
-  const songs = filtered;
-  const albums = useMemo(() => (view === "albums" ? groupAlbums(filtered) : []), [filtered, view]);
-  const artists = useMemo(() => (view === "artists" ? groupArtists(filtered) : []), [filtered, view]);
-  const counts = useMemo(
-    () => ({
-      albums: new Set(filtered.map((t) => t.album).filter(Boolean)).size,
-      artists: new Set(filtered.map((t) => t.artist).filter(Boolean)).size,
-      songs: filtered.length,
-    }),
-    [filtered],
+
+  // The server finds the songs: the text is sent a moment after typing stops, and only a page of results comes back.
+  const [dq, setDq] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setDq(q), 300);
+    return () => window.clearTimeout(t);
+  }, [q]);
+  const { data: homeData } = useHome();
+  const genres = homeData?.genres ?? [];
+  const [results, setResults] = useState<Track[]>([]);
+  const [next, setNext] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const request = useRef(0);
+  const { remember, version } = lib;
+  const load = useCallback(async (cursor: number | undefined, reset: boolean) => {
+    const id = ++request.current;
+    setLoading(true);
+    setLoadError("");
+    try {
+      const page = await api.browse({ q: dq.trim(), genre, cursor, view });
+      if (id !== request.current) return;
+      remember(page.tracks);
+      setResults((old) => (reset ? page.tracks : [...old, ...page.tracks]));
+      setNext(page.next);
+    } catch (e) {
+      if (id === request.current) setLoadError(e instanceof Error ? e.message : "Could not load");
+    } finally {
+      if (id === request.current) setLoading(false);
+    }
+  }, [dq, genre, view, remember]);
+  // `version` changes when songs were edited, so the list is read again.
+  useEffect(() => {
+    void load(undefined, true);
+  }, [load, version]);
+
+  const songs = results;
+  const albums = useMemo(() => (view === "albums" ? groupAlbums(results, true) : []), [results, view]);
+  const artists = useMemo(() => (view === "artists" ? groupArtists(results, true) : []), [results, view]);
+  const more = next !== null && (
+    <p><button className="link" disabled={loading} onClick={() => void load(next, false)}>{loading ? "Loading…" : "Show more"}</button></p>
   );
-  const recent = useMemo(() => [...albums].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12), [albums]);
-  // A long result list is shown in pages, so a broad search does not build thousands of rows at once.
-  const PAGE = 100;
-  const [shown, setShown] = useState(PAGE);
-  useEffect(() => setShown(PAGE), [dq, view]);
-  const more = (n: number) => n > shown && <p><button className="link" onClick={() => setShown((s) => s + PAGE)}>Show {Math.min(PAGE, n - shown)} more of {n - shown}</button></p>;
-  const detailAlbum = useMemo(() => (open?.kind === "album" ? groupAlbums(tracks).find((a) => a.key === open.key) : undefined), [tracks, open]);
-  const detailArtist = useMemo(() => (open?.kind === "artist" ? groupArtists(tracks).find((a) => a.name === open.key) : undefined), [tracks, open]);
-  const mine = playlists.filter((p) => p.ownerUid === uid);
-  const allAlbums = useMemo(() => groupAlbums(tracks), [tracks]);
-  const allArtists = useMemo(() => groupArtists(tracks), [tracks]);
-  const [editing, setEditing] = useState<{ kind: "song"; track: Track } | { kind: "album" | "artist"; name: string } | null>(null);
-  // An album or artist that no longer exists (renamed, merged, or its songs moved away): leave its page.
-  // Not while a rename is saving: the page's new name only appears in the list once the library has refreshed.
+
+  // One album or artist: all of its songs, asked for when it is opened.
+  const [detail, setDetail] = useState<{ kind: "album" | "artist"; key: string; tracks: Track[] } | null>(null);
   const renaming = useRef(false);
   useEffect(() => {
-    if (!renaming.current && open && tracks.length > 0 && !detailAlbum && !detailArtist) setOpen(null);
-  }, [open, tracks.length, detailAlbum, detailArtist]);
+    if (!open) return;
+    let live = true;
+    api.group(open.kind, open.key).then((r) => {
+      if (!live) return;
+      remember(r.tracks);
+      // Gone (renamed, merged, or its songs moved away): leave its page. Not while a rename is saving.
+      if (r.tracks.length === 0 && !renaming.current) setOpen(null);
+      else setDetail({ ...open, tracks: r.tracks });
+    }).catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [open, version, remember]);
+  const shownDetail = open && detail && detail.kind === open.kind && detail.key === open.key ? detail.tracks : null;
+  const detailAlbum = useMemo(() => (open?.kind === "album" && shownDetail ? groupAlbums(shownDetail)[0] : undefined), [open, shownDetail]);
+  const detailArtist = useMemo(() => (open?.kind === "artist" && shownDetail ? groupArtists(shownDetail)[0] : undefined), [open, shownDetail]);
+  const mine = playlists.filter((p) => p.ownerUid === uid);
+  const [editing, setEditing] = useState<{ kind: "song"; track: Track } | { kind: "album" | "artist"; name: string } | null>(null);
+  const names = (kind: "album" | "artist") => async (typed: string) => (await api.names(kind, typed)).names;
+  // Names the rename dialog last got from the server, so its hint can say "already exists" while you type.
+  const knownNames = useRef<string[]>([]);
 
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -301,23 +331,6 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
   const selectLink = !selecting && <button className="link" onClick={() => setSelecting(true)}>Select</button>;
   const rowSelect = (t: Track) => (selecting ? { picked: picked.has(t.id), toggle: () => toggle(t.id) } : undefined);
 
-  const [artMsg, setArtMsg] = useState("");
-  const findCovers = async () => {
-    let found = 0;
-    try {
-      for (let left = 1; left > 0; ) {
-        setArtMsg(`Looking up covers… ${found} found`);
-        const r = await api.fetchArt();
-        found += r.updated;
-        left = r.remaining;
-      }
-      setArtMsg(`Done: ${found} new cover${found === 1 ? "" : "s"}.`);
-    } catch (e) {
-      setArtMsg(e instanceof Error ? e.message : "Cover lookup failed");
-    }
-    await refresh();
-  };
-
   const rowExtra = (t: Track) => (
     <select
       className="more"
@@ -376,8 +389,8 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
           onClose={close}
           fields={[
             { key: "title", label: "Title", value: t.title, required: true, accents: isOwner },
-            { key: "artist", label: "Artist", value: t.artist, options: allArtists.map((a) => a.name), accents: isOwner },
-            { key: "album", label: "Album", value: t.album, options: allAlbums.map((a) => a.name), accents: isOwner },
+            { key: "artist", label: "Artist", value: t.artist, lookup: names("artist"), accents: isOwner },
+            { key: "album", label: "Album", value: t.album, lookup: names("album"), accents: isOwner },
             { key: "trackNo", label: "Track number", value: t.trackNo ? String(t.trackNo) : "", numeric: true },
             { key: "ai", label: "Made by AI (shows a badge)", value: t.ai ? "1" : "", checkbox: true },
           ]}
@@ -391,40 +404,42 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
     }
     const kind = editing.kind;
     const current = editing.name;
-    const groups = (kind === "album" ? allAlbums.map((a) => ({ name: a.name, count: a.tracks.length })) : allArtists.map((a) => ({ name: a.name, count: a.tracks.length })));
     const nfc = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim();
-    const count = groups.find((g) => g.name === current)?.count ?? 0;
+    const count = shownDetail?.length ?? 0;
     return (
       <EditDialog
         title={kind === "album" ? "Rename or merge album" : "Rename or merge artist"}
         onClose={close}
-        fields={[{ key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, accents: isOwner, kind, options: groups.filter((g) => g.name !== current).map((g) => g.name) }]}
+        fields={[{ key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, accents: isOwner, kind, lookup: async (typed: string) => (knownNames.current = await names(kind)(typed)) }]}
         hint={(v) => {
           const to = nfc(v.name ?? "");
-          const target = groups.find((g) => g.name !== current && nfc(g.name) === to);
+          const target = knownNames.current.find((n) => n !== current && nfc(n) === to);
           return target
-            ? { text: `"${target.name}" already exists (${songCount(target.count)}). All ${songCount(count)} here move into it and "${current}" is removed.`, action: "Merge" }
+            ? { text: `"${target}" already exists. All ${songCount(count)} here move into it and "${current}" is removed.`, action: "Merge" }
             : { text: `Renames the ${kind} on all ${songCount(count)}.`, action: "Rename" };
         }}
         onSave={async (v) => {
           const to = nfc(v.name);
-          const existing = groups.find((g) => g.name !== current && nfc(g.name) === to);
+          const existing = (await api.names(kind, to)).names.find((n) => n !== current && nfc(n) === to);
           renaming.current = true;
           let r;
           try {
             r = await api.renameGroup(kind, current, to);
             await refresh();
             // Stay on the page under its new name (or the one it merged into), so more edits can follow.
-            if (open?.kind === kind && open.key === current) setOpen({ kind, key: existing?.name ?? to });
+            if (open?.kind === kind && open.key === current) setOpen({ kind, key: existing ?? to });
           } finally {
             renaming.current = false;
           }
-          flash(`${existing ? `Merged into ${existing.name}` : `Renamed to ${to}`}${r?.warning ? ` ${r.warning}` : ""}`);
+          flash(`${existing ? `Merged into ${existing}` : `Renamed to ${to}`}${r?.warning ? ` ${r.warning}` : ""}`);
         }}
       />
     );
   })();
 
+  if (open && !detailAlbum && !detailArtist) {
+    return <div className="wide"><p className="muted" role="status">Loading…</p></div>;
+  }
   if (detailAlbum || detailArtist) {
     const back = () => setOpen(null);
     const list = detailAlbum?.tracks ?? detailArtist!.tracks;
@@ -468,12 +483,14 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
   }
 
   const views: [View, string][] = [["albums", "Albums"], ["artists", "Artists"], ["songs", "Songs"]];
-  const noMatch = `Nothing matches "${dq.trim()}". Words can be in any order, and accents and capitals do not matter.`;
+  const filtered = !!dq.trim() || !!genre;
+  const noMatch = filtered ? `Nothing matches${dq.trim() ? ` "${dq.trim()}"` : ""}${genre ? ` in ${genre}` : ""}. Words can be in any order, and accents and capitals do not matter.` : "";
+  const heading = filtered ? "Results" : "Recently added";
   return (
     <div className="wide">
       {dialog}
       {toastEl}
-      <div className="search-box" aria-busy={q !== dq}>
+      <div className="search-box" aria-busy={q !== dq || loading}>
         <input
           className="search"
           placeholder="Search songs, artists, albums"
@@ -485,19 +502,21 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
         />
         {q && <button className="clear" aria-label="Clear search" title="Clear search" onClick={() => setQ("")}>✕</button>}
       </div>
-      <div className="seg" role="tablist">
-        {views.map(([k, label]) => (
-          <button key={k} role="tab" aria-selected={view === k} className={view === k ? "active" : ""} onClick={() => setView(k)}>
-            {label}{dq.trim() && <small> {counts[k]}</small>}
-          </button>
-        ))}
+      <div className="filters">
+        <div className="seg" role="tablist">
+          {views.map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={view === k} className={view === k ? "active" : ""} onClick={() => setView(k)}>{label}</button>
+          ))}
+        </div>
+        {genres.length > 0 && (
+          <select aria-label="Genre" value={genre} onChange={(e) => setGenre(e.target.value)}>
+            <option value="">All genres</option>
+            {genres.map((g) => <option key={g.name} value={g.name}>{g.name} ({g.count})</option>)}
+          </select>
+        )}
       </div>
-      {tracks.some((t) => !t.hasArt && t.source === "r2") && (
-        <p className="muted">
-          Some songs have no cover. <button className="link" onClick={() => void findCovers()}>Find missing covers online</button> {artMsg}
-        </p>
-      )}
-      {tracks.length === 0 ? (
+      {loadError && <p className="error" role="alert">{loadError} <button className="link" onClick={() => void load(undefined, true)}>Try again</button></p>}
+      {results.length === 0 && !loading && !loadError && !filtered ? (
         <div className="empty">
           <p><strong>No songs yet</strong></p>
           {isOwner
@@ -506,38 +525,32 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
         </div>
       ) : view === "albums" ? (
         <>
-          {!q && recent.length > 1 && (
-            <section>
-              <h3>Recently added</h3>
-              <div className="strip">
-                {recent.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => openItem({ kind: "album", key: a.key })} />)}
-              </div>
-              <h3>All albums <small>{albums.length}</small></h3>
-            </section>
-          )}
+          {albums.length > 0 && <h3>{heading}</h3>}
           <div className="grid">
-            {albums.slice(0, shown).map((a) => <AlbumCard key={a.key} album={a} onOpen={() => openItem({ kind: "album", key: a.key })} />)}
+            {albums.map((a) => <AlbumCard key={a.key} album={a} onOpen={() => openItem({ kind: "album", key: a.key })} />)}
           </div>
-          {more(albums.length)}
-          {albums.length === 0 && <p className="muted">{noMatch}</p>}
+          {more}
+          {albums.length === 0 && !loading && !loadError && <p className="muted">{noMatch || "No albums here."}</p>}
         </>
       ) : view === "artists" ? (
         <>
+          {artists.length > 0 && <h3>{heading}</h3>}
           <div className="grid">
-            {artists.slice(0, shown).map((a) => <ArtistCard key={a.name} artist={a} onOpen={() => openItem({ kind: "artist", key: a.name })} />)}
+            {artists.map((a) => <ArtistCard key={a.name} artist={a} onOpen={() => openItem({ kind: "artist", key: a.name })} />)}
           </div>
-          {more(artists.length)}
-          {artists.length === 0 && <p className="muted">{noMatch}</p>}
+          {more}
+          {artists.length === 0 && !loading && !loadError && <p className="muted">{noMatch || "No artists here."}</p>}
         </>
       ) : (
         <>
           {selectBar(songs)}
-          <p className="muted">{songCount(songs.length)} {selectLink}</p>
+          <h3>{heading}</h3>
+          {songs.length > 0 && <p className="muted">{songs.length}{next !== null ? "+" : ""} songs {selectLink}</p>}
           <ul>
-            {songs.slice(0, shown).map((t) => <TrackRow key={t.id} t={t} queue={songs} extra={selecting ? undefined : rowExtra(t)} select={rowSelect(t)} />)}
+            {songs.map((t) => <TrackRow key={t.id} t={t} queue={songs} extra={selecting ? undefined : rowExtra(t)} select={rowSelect(t)} />)}
           </ul>
-          {more(songs.length)}
-          {songs.length === 0 && <p className="muted">{noMatch}</p>}
+          {more}
+          {songs.length === 0 && !loading && !loadError && <p className="muted">{noMatch || "No songs here."}</p>}
         </>
       )}
     </div>
@@ -558,11 +571,15 @@ const watchForYou = (f: () => void) => {
   return () => void forYouSubs.delete(f);
 };
 
-function ForYou({ lib }: { lib: ReturnType<typeof useLibrary> }) {
+function ForYou({ lib }: { lib: LibraryState }) {
   const { busy, error, result, prompt: mood } = useSyncExternalStore(watchForYou, () => forYouState);
   const p = usePlayer();
   const [saved, setSaved] = useState("");
   useEffect(() => setSaved(""), [result]);
+  const { ensure } = lib;
+  useEffect(() => {
+    if (result) void ensure(result.tracks.map((x) => x.id));
+  }, [result, ensure]);
 
   const ask = async () => {
     setForYou({ busy: true, error: "" });
@@ -634,10 +651,18 @@ function ForYou({ lib }: { lib: ReturnType<typeof useLibrary> }) {
   );
 }
 
-function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: string }) {
+function Playlists({ lib, uid }: { lib: LibraryState; uid: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const pls = [...lib.playlists.values()].sort((a, b) => a.name.localeCompare(b.name));
   const open = openId ? lib.playlists.get(openId) : undefined;
+  // Playlists only hold ids: the open one is fetched whole, the others just enough to show a cover.
+  const { ensure } = lib;
+  const wanted = open ? open.trackIds : pls.flatMap((p) => p.trackIds.slice(0, 3));
+  const wantedKey = wanted.join(",");
+  useEffect(() => {
+    void ensure(wanted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantedKey, ensure]);
 
   const [creating, setCreating] = useState(false);
 
@@ -698,7 +723,11 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
 }
 
 /** Owner tools for the shared library: where songs come from (YouTube, the NAS inbox) and keeping their names tidy. */
-function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void>; tracks: Track[] }) {
+function LibraryTools({ lib, home, recheck }: { lib: LibraryState; home: ServerStatus | null; recheck: () => Promise<void> }) {
+  const { refresh } = lib;
+  const tracks = useMemo(() => [...lib.tracks.values()], [lib.tracks]);
+  const [loadingAll, setLoadingAll] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [fixOpen, setFixOpen] = useState(false);
   const [fixSeen, setFixSeen] = useState(false);
   const down = home !== null && !home.ok;
@@ -734,7 +763,26 @@ function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promi
           <h3>Fix Vietnamese names</h3>
           <p className="muted">Finds Vietnamese titles, albums and artists with missing accents or wrong capitals. You pick which names to ask the AI about, and review every fix before it is saved.</p>
           <p>
-            <button onClick={() => { setFixSeen(true); setFixOpen(true); window.scrollTo(0, 0); }} disabled={down} title={down ? home.error : undefined}>Open the name fixer…</button>
+            <button
+              disabled={down || loadingAll}
+              title={down ? home.error : undefined}
+              onClick={async () => {
+                // The fixer looks at every name, so this is the one place the whole library is read (once).
+                setLoadError("");
+                setLoadingAll(true);
+                try {
+                  if (!fixSeen) await lib.loadAll();
+                  setFixSeen(true);
+                  setFixOpen(true);
+                  window.scrollTo(0, 0);
+                } catch (e) {
+                  setLoadError(e instanceof Error ? e.message : "Could not load the library");
+                } finally {
+                  setLoadingAll(false);
+                }
+              }}
+            >{loadingAll ? "Loading the library…" : "Open the name fixer…"}</button>
+            {loadError && <span className="error"> {loadError}</span>}
           </p>
         </section>
       </div>

@@ -20,10 +20,10 @@ export interface Artist {
 const byTrackNo = (a: Track, b: Track) => a.trackNo - b.trackNo || a.title.localeCompare(b.title);
 
 /** Albums are the distinct album names (like the phone app); songs without an album tag are left out. */
-export function groupAlbums(tracks: Track[]): Album[] {
+export function groupAlbums(tracks: Track[], keepOrder = false): Album[] {
   const m = new Map<string, Track[]>();
   for (const t of tracks) if (t.album) (m.get(t.album) ?? m.set(t.album, []).get(t.album)!).push(t);
-  return [...m].map(([name, list]) => {
+  const albums = [...m].map(([name, list]) => {
     const sorted = list.sort(byTrackNo);
     const artists = new Set(sorted.map((t) => t.artist).filter(Boolean));
     return {
@@ -34,15 +34,16 @@ export function groupAlbums(tracks: Track[]): Album[] {
       art: sorted.find((t) => t.hasArt),
       updatedAt: Math.max(...sorted.map((t) => t.updatedAt)),
     };
-  }).sort((a, b) => a.name.localeCompare(b.name));
+  });
+  // Search results and "newest first" keep the order they came in; a plain list is alphabetical.
+  return keepOrder ? albums : albums.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function groupArtists(tracks: Track[]): Artist[] {
+export function groupArtists(tracks: Track[], keepOrder = false): Artist[] {
   const m = new Map<string, Track[]>();
   for (const t of tracks) if (t.artist) (m.get(t.artist) ?? m.set(t.artist, []).get(t.artist)!).push(t);
-  return [...m]
-    .map(([name, list]) => ({ name, tracks: list.sort((a, b) => a.album.localeCompare(b.album) || byTrackNo(a, b)) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const artists = [...m].map(([name, list]) => ({ name, tracks: list.sort((a, b) => a.album.localeCompare(b.album) || byTrackNo(a, b)) }));
+  return keepOrder ? artists : artists.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export const songCount = (n: number) => `${n} song${n === 1 ? "" : "s"}`;

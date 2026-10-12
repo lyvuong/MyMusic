@@ -1,4 +1,4 @@
-import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, Track, YoutubeInfo } from "../shared/types";
+import type { BeetsRun, BrowsePage, FamilyInfo, HomeData, Playlist, ServerStatus, Suggestion, Track, YoutubeInfo } from "../shared/types";
 import { auth } from "./firebase";
 
 export class ApiError extends Error {
@@ -51,7 +51,28 @@ export const api = {
   invite: () => call<{ code: string; expiresAt: number }>("POST", "/api/family/invites"),
   removeMember: (uid: string) => call<void>("DELETE", `/api/family/members/${uid}`),
   deleteAccount: () => call<void>("DELETE", "/api/account"),
-  library: (since: number) => call<LibraryDelta>("GET", `/api/library?since=${since}`),
+  /** Playlists, and (unless `tracks` is false) the songs changed after `since`; since = 0 with tracks is the whole library. */
+  library: (since: number, tracks = true) => call<LibraryDelta>("GET", `/api/library?since=${since}${tracks ? "" : "&tracks=0"}`),
+  /** The start page: today's mixes, newest songs, most played, loved, genres. */
+  home: () => call<HomeData>("GET", "/api/home"),
+  /** A page of songs: search text and/or genre; newest first when there is no text. `view` sets the page size. */
+  browse: (o: { q?: string; genre?: string; cursor?: number; view?: "songs" | "albums" | "artists" }) => {
+    const p = new URLSearchParams();
+    if (o.q) p.set("q", o.q);
+    if (o.genre) p.set("genre", o.genre);
+    if (o.cursor) p.set("cursor", String(o.cursor));
+    p.set("view", o.view ?? "songs");
+    return call<BrowsePage>("GET", `/api/browse?${p}`);
+  },
+  /** Every song of one album or artist. */
+  group: (kind: "album" | "artist", name: string) =>
+    call<{ tracks: Track[] }>("GET", `/api/group?kind=${kind}&name=${encodeURIComponent(name)}`),
+  /** Existing artist or album names matching what is typed. */
+  names: (kind: "album" | "artist", q: string) =>
+    call<{ names: string[] }>("GET", `/api/names?kind=${kind}&q=${encodeURIComponent(q)}`),
+  tracksByIds: (ids: string[]) => call<{ tracks: Track[] }>("POST", "/api/tracks/by-ids", { ids }),
+  /** Builds the caller's own mixes now (about half a minute) instead of waiting for tonight. */
+  refreshMixes: () => call<{ saved: number }>("POST", "/api/mixes/refresh"),
   savePlaylist: (p: { id: string; name: string; shared: boolean; trackIds: string[] }) =>
     call<void>("PUT", `/api/playlists/${p.id}`, { name: p.name, shared: p.shared, trackIds: p.trackIds }),
   deletePlaylist: (id: string) => call<void>("DELETE", `/api/playlists/${id}`),
