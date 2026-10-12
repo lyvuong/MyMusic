@@ -132,14 +132,14 @@ function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo;
     <div className="shell" ref={shellRef}>
       <header ref={headerRef}>
         <h1><img className="logo" src="/icon-192.png" alt="" /> MyMusic <small>{family.name}</small></h1>
-        <nav>
+        <nav aria-label="Sections">
           {tabs.map(([k, label]) => (
-            <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>{label}</button>
+            <button key={k} className={tab === k ? "active" : ""} aria-current={tab === k ? "page" : undefined} onClick={() => setTab(k)}>{label}</button>
           ))}
         </nav>
       </header>
       <main>
-        {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} home={home} />}
+        {tab === "library" && <Library tracks={[...lib.tracks.values()]} playlists={[...lib.playlists.values()]} uid={user.uid} refresh={lib.refresh} home={home} isOwner={family.role === "owner"} openTools={() => setTab("tools")} />}
         {tab === "foryou" && <ForYou lib={lib} />}
         {tab === "playlists" && <Playlists lib={lib} uid={user.uid} />}
         {tab === "tools" && family.role === "owner" && <LibraryTools refresh={lib.refresh} home={home} recheck={checkHome} tracks={[...lib.tracks.values()]} />}
@@ -175,7 +175,7 @@ function TrackRow({ t, queue, extra, number, hideArtist, select, note }: { t: Tr
 
 type View = "albums" | "artists" | "songs";
 
-function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; playlists: Playlist[]; uid: string; refresh: () => Promise<void>; home: ServerStatus | null }) {
+function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: { tracks: Track[]; playlists: Playlist[]; uid: string; refresh: () => Promise<void>; home: ServerStatus | null; isOwner: boolean; openTools: () => void }) {
   const canEdit = home?.ok !== false;
   const editOff = home && !home.ok ? `Editing names is unavailable: ${home.error}` : "";
   const [q, setQ] = useState("");
@@ -268,20 +268,9 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
     }
   };
 
-  /** Asks for a name, then creates a playlist holding the songs. */
-  const createWith = async (ts: Track[]): Promise<boolean> => {
-    const name = prompt("Name for the new playlist")?.trim();
-    if (!name) return false;
-    try {
-      await api.savePlaylist({ id: crypto.randomUUID(), name, shared: false, trackIds: ts.map((t) => t.id) });
-      await refresh();
-      flash(`Created ${name} with ${what(ts)}`);
-      return true;
-    } catch (e) {
-      flash(e instanceof Error ? e.message : "Could not create the playlist");
-      return false;
-    }
-  };
+  /** Asks for a name in a dialog, then creates a playlist holding the songs. Resolves to whether it was created. */
+  const [naming, setNaming] = useState<{ ts: Track[]; done: (ok: boolean) => void } | null>(null);
+  const createWith = (ts: Track[]) => new Promise<boolean>((done) => setNaming({ ts, done }));
 
   /** Bar above the player while picking songs: how many, select all, add to a playlist, done. */
   const selectBar = (visible: Track[]) => {
@@ -359,6 +348,24 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
 
   /** The edit dialog: one song's details, or an album/artist name (typing an existing name merges the two). */
   const dialog = (() => {
+    if (naming) {
+      const { ts, done } = naming;
+      return (
+        <EditDialog
+          title="New playlist"
+          onClose={() => { done(false); setNaming(null); }}
+          fields={[{ key: "name", label: "Playlist name", value: "", required: true }]}
+          hint={() => ({ text: `Starts with ${what(ts)}. Only you can see it until you share it.`, action: "Create" })}
+          onSave={async (v) => {
+            const name = v.name.trim();
+            await api.savePlaylist({ id: crypto.randomUUID(), name, shared: false, trackIds: ts.map((t) => t.id) });
+            await refresh();
+            flash(`Created ${name} with ${what(ts)}`);
+            done(true);
+          }}
+        />
+      );
+    }
     if (!editing) return null;
     const close = () => setEditing(null);
     if (editing.kind === "song") {
@@ -491,7 +498,12 @@ function Library({ tracks, playlists, uid, refresh, home }: { tracks: Track[]; p
         </p>
       )}
       {tracks.length === 0 ? (
-        <p className="muted">No songs yet. Add music to your NAS, then run "Sync music from NAS" in the Library tools tab.</p>
+        <div className="empty">
+          <p><strong>No songs yet</strong></p>
+          {isOwner
+            ? <><p className="muted">Add songs from YouTube, or drop files into the NAS inbox and import them.</p><button className="primary" onClick={openTools}>Add music</button></>
+            : <p className="muted">The family owner adds the music. Check back soon.</p>}
+        </div>
       ) : view === "albums" ? (
         <>
           {!q && recent.length > 1 && (
@@ -587,7 +599,7 @@ function ForYou({ lib }: { lib: ReturnType<typeof useLibrary> }) {
         {busy && <span className="spinner" aria-hidden="true" />}
       </form>
       <div className="seg">
-        {MOODS.map((m) => <button key={m} onClick={() => setForYou({ prompt: m })}>{m}</button>)}
+        {MOODS.map((m) => <button key={m} className={mood === m ? "active" : ""} aria-pressed={mood === m} onClick={() => setForYou({ prompt: mood === m ? "" : m })}>{m}</button>)}
       </div>
       {error && <p className="error" role="alert">{error}</p>}
       {result && (
@@ -627,12 +639,7 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
   const pls = [...lib.playlists.values()].sort((a, b) => a.name.localeCompare(b.name));
   const open = openId ? lib.playlists.get(openId) : undefined;
 
-  const create = async () => {
-    const name = prompt("Playlist name")?.trim();
-    if (!name) return;
-    await api.savePlaylist({ id: crypto.randomUUID(), name, shared: false, trackIds: [] });
-    await lib.refresh();
-  };
+  const [creating, setCreating] = useState(false);
 
   if (open) {
     const mine = open.ownerUid === uid;
@@ -653,14 +660,28 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
             <TrackRow key={t.id} t={t} queue={tracks} extra={mine ? <button className="link" onClick={() => void save({ trackIds: open.trackIds.filter((x) => x !== t.id) })}>Remove</button> : undefined} />
           ))}
         </ul>
-        {tracks.length === 0 && <p className="muted">Empty. Add songs from the Library tab.</p>}
+        {tracks.length === 0 && <p className="muted">Empty. In the Library tap Select (or ⋯ on a song) and choose Add to {open.name}.</p>}
       </>
     );
   }
 
   return (
     <>
-      <button className="primary" onClick={create}>New playlist</button>
+      {creating && (
+        <EditDialog
+          title="New playlist"
+          onClose={() => setCreating(false)}
+          fields={[{ key: "name", label: "Playlist name", value: "", required: true }]}
+          hint={() => ({ text: "Only you can see it until you share it with the family.", action: "Create" })}
+          onSave={async (v) => {
+            const id = crypto.randomUUID();
+            await api.savePlaylist({ id, name: v.name.trim(), shared: false, trackIds: [] });
+            await lib.refresh();
+            setOpenId(id);
+          }}
+        />
+      )}
+      <button className="primary" onClick={() => setCreating(true)}>New playlist</button>
       <ul>
         {pls.map((p) => (
           <li key={p.id} className="row">
@@ -671,35 +692,33 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
           </li>
         ))}
       </ul>
-      {pls.length === 0 && <p className="muted">No playlists yet.</p>}
+      {pls.length === 0 && <p className="muted">No playlists yet. Make one here, or in the Library tap Select, pick some songs and choose Add to…</p>}
     </>
   );
 }
 
-/** Owner tools for the shared library: where songs come from (NAS, inbox, YouTube) and fixing their names. */
+/** Owner tools for the shared library: where songs come from (YouTube, the NAS inbox) and keeping their names tidy. */
 function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void>; tracks: Track[] }) {
   const [fixOpen, setFixOpen] = useState(false);
-  const [nasMsg, setNasMsg] = useState("");
-  const syncNas = async (): Promise<boolean> => {
+  const down = home !== null && !home.ok;
+  /** Reads the whole NAS library into the app. Reports progress in the status line; resolves to a summary, or null if it failed. */
+  const syncNas = async (): Promise<string | null> => {
     let offset = 0;
     const ids: string[] = [];
     try {
       for (;;) {
-        setNasMsg(`Syncing… ${offset} songs`);
+        setOrganize({ msg: `Syncing the library… ${offset} songs` });
         const r = await api.syncNas(offset);
         offset = r.next;
         ids.push(...r.ids);
         if (r.done) break;
       }
       const { removed, skippedRemoval } = await api.finishNasSync(ids);
-      setNasMsg(
-        `Done: ${offset} songs from the NAS${removed ? `, ${removed} removed` : ""}.` +
-          (skippedRemoval ? ` Not removing ${skippedRemoval} songs: the NAS list looked incomplete.` : ""),
-      );
-      return true;
+      return `${offset} songs${removed ? `, ${removed} removed` : ""}.` +
+        (skippedRemoval ? ` Not removing ${skippedRemoval} songs: the NAS list looked incomplete.` : "");
     } catch (e) {
-      setNasMsg(e instanceof Error ? e.message : "Sync failed");
-      return false;
+      setOrganize({ msg: e instanceof Error ? e.message : "Sync failed" });
+      return null;
     } finally {
       await refresh();
     }
@@ -707,46 +726,88 @@ function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promi
   return (
     <>
       <h2>Library tools</h2>
+      <p className="muted">Everything here updates the shared library for the whole family. New songs show up in the Library by themselves when a job finishes.</p>
       <Organize syncNas={syncNas} home={home} recheck={recheck} />
-      <p>
-        <button onClick={() => void syncNas()}>Sync music from NAS</button> <small className="muted">{nasMsg}</small>
-      </p>
-      <p>
-        <button onClick={() => setFixOpen((o) => !o)} disabled={home !== null && !home.ok} title={home !== null && !home.ok ? home.error : undefined}>
-          {fixOpen ? "Hide Vietnamese name fixer" : "Fix Vietnamese names…"}
-        </button>
-      </p>
-      {fixOpen && <FixVietnamese tracks={tracks} refresh={refresh} />}
+      <section className="tool">
+        <h3>Fix Vietnamese names</h3>
+        <p className="muted">Finds titles, albums and artists typed without accents or in the wrong case, and lets you review the fixes before saving.</p>
+        <p>
+          <button onClick={() => setFixOpen((o) => !o)} disabled={down} title={down ? home.error : undefined}>
+            {fixOpen ? "Hide the name fixer" : "Review names…"}
+          </button>
+        </p>
+        {fixOpen && <FixVietnamese tracks={tracks} refresh={refresh} />}
+      </section>
     </>
   );
 }
 
 /** Who is in the family, inviting people, and this person's own account. */
 function Family({ family, uid, reload }: { family: FamilyInfo; uid: string; reload: () => Promise<void> }) {
-  const [code, setCode] = useState("");
+  const isOwner = family.role === "owner";
+  const [invite, setInvite] = useState<{ code: string; expiresAt: number } | null>(null);
+  const [note, setNote] = useState("");
+  const createInvite = async () => {
+    setNote("");
+    try {
+      setInvite(await api.invite());
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Could not create an invite");
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(invite!.code);
+      setNote("Copied. Send it to the person you are inviting.");
+    } catch {
+      setNote("Could not copy. Select the code and copy it by hand.");
+    }
+  };
   return (
     <>
       <h2>{family.name}</h2>
       <ul>
-        {family.members.map((m) => (
-          <li key={m.uid} className="row">
-            <span className="grow"><strong>{m.displayName || m.email}</strong><small>{m.role}</small></span>
-            {family.role === "owner" && m.uid !== uid && (
-              <button className="link danger" onClick={async () => { if (confirm("Remove this member?")) { await api.removeMember(m.uid); await reload(); } }}>Remove</button>
-            )}
-          </li>
-        ))}
+        {family.members.map((m) => {
+          const name = m.displayName || m.email;
+          return (
+            <li key={m.uid} className="row">
+              <span className="grow">
+                <strong>{name}{m.uid === uid && <small> (you)</small>}</strong>
+                <small>{m.role === "owner" ? "Owner" : "Member"}{m.displayName && m.email ? ` · ${m.email}` : ""}</small>
+              </span>
+              {isOwner && m.uid !== uid && (
+                <button className="link danger" aria-label={`Remove ${name}`} onClick={async () => {
+                  if (confirm(`Remove ${name} from the family? They lose access and their playlists are deleted.`)) { await api.removeMember(m.uid); await reload(); }
+                }}>Remove</button>
+              )}
+            </li>
+          );
+        })}
       </ul>
-      {family.role === "owner" && (
-        <p>
-          <button onClick={async () => setCode((await api.invite()).code)}>Create invite code</button>{" "}
-          {code && <code className="code">{code}</code>}
-        </p>
+      {isOwner && (
+        <section className="tool">
+          <h3>Invite someone</h3>
+          <p className="muted">They sign in, choose Join a family and enter the code.</p>
+          {invite ? (
+            <p>
+              <code className="code">{invite.code}</code>{" "}
+              <button onClick={() => void copy()}>Copy</button>{" "}
+              <small className="muted">Works until {new Date(invite.expiresAt).toLocaleDateString()}</small>
+            </p>
+          ) : (
+            <p><button onClick={() => void createInvite()}>Create invite code</button></p>
+          )}
+          {note && <p role="status"><small className="muted">{note}</small></p>}
+        </section>
       )}
-      <hr />
-      <p><small className="muted">Version {__APP_VERSION__}</small></p>
-      <button className="link" onClick={() => signOut()}>Sign out</button>{" "}
-      <button className="link danger" onClick={async () => { if (confirm("Delete your account? You leave the family and your playlists are deleted.")) { await api.deleteAccount(); await auth.currentUser?.delete().catch(() => signOut()); } }}>Delete my account</button>
+      <section className="tool">
+        <h3>Your account</h3>
+        <p>
+          <button onClick={() => signOut()}>Sign out</button>{" "}
+          <button className="link danger" onClick={async () => { if (confirm("Delete your account? You leave the family and your playlists are deleted. This cannot be undone.")) { await api.deleteAccount(); await auth.currentUser?.delete().catch(() => signOut()); } }}>Delete my account</button>
+        </p>
+        <p><small className="muted">Version {__APP_VERSION__}</small></p>
+      </section>
     </>
   );
 }
@@ -794,7 +855,7 @@ let lastSyncAt = 0;
  * it up again when you come back. `first` are runs the caller has just started, so one that ends before the first
  * look is still noticed.
  */
-async function track(syncNas: () => Promise<boolean>, first: string[] = []) {
+async function track(syncNas: () => Promise<string | null>, first: string[] = []) {
   if (tracking) return;
   tracking = true;
   const seen = new Set<string>(first);
@@ -833,7 +894,8 @@ async function track(syncNas: () => Promise<boolean>, first: string[] = []) {
         await sleep(2000);
         for (let i = 0; i < 200 && (await api.nasScanning()).scanning; i++) await sleep(3000);
         setOrganize({ msg: "Syncing the library…" });
-        doneMsg = (await syncNas()) ? "Done: Beets ran, Navidrome scanned and the library synced." : "Beets ran, but the library sync failed.";
+        const summary = await syncNas();
+        doneMsg = summary !== null ? `Done: the library is up to date (${summary})` : "Beets ran, but the library sync failed.";
         lastSyncAt = Date.now();
         setOrganize({ msg: doneMsg });
         continue;
@@ -879,7 +941,7 @@ function ytHint(rows: YtRow[]): string {
   return why.length ? `Not ready: ${why.join("; ")}.` : "";
 }
 
-function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>; home: ServerStatus | null; recheck: () => Promise<void> }) {
+function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | null>; home: ServerStatus | null; recheck: () => Promise<void> }) {
   const down = home !== null && !home.ok;
   const { busy, msg, runs } = useSyncExternalStore(watchOrganize, () => organizeState);
   // An import and an enrich may run at the same time (the server queues them for the library); each button only waits for its own kind.
@@ -976,133 +1038,147 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<boolean>;
 
   return (
     <>
-      <p>
-        <button disabled={scanning || imp !== null || down} onClick={() => void organize()}>Organize inbox and update library</button>{" "}
-        <button disabled={scanning || enr !== null || down} onClick={() => void enrich()} title="Fetch missing cover art and genres now, like the nightly job">Run enrich now</button>{" "}
-        {busy && <span className="spinner" aria-hidden="true" />}
-        <small className="muted" role="status">{msg}</small>
-      </p>
-      {home?.ok && (home.autoImport || (home.waiting ?? 0) > 0) && (
-        <p>
-          <small className="muted">
-            {home.autoImport ? "Files added to the inbox are imported automatically." : ""}
-            {(home.waiting ?? 0) > 0 ? ` ${home.waiting} file${home.waiting === 1 ? "" : "s"} waiting in the inbox.` : ""}
-          </small>
-        </p>
-      )}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (ytRows.length && !ytBusy) void addAll();
-          else if (ytText.trim()) void lookUp();
-        }}
-      >
-        <p>
-          <strong>Add songs from YouTube</strong>
-        </p>
-        <p>
-          <textarea
-            value={ytText}
-            rows={2}
-            placeholder="Paste one or more YouTube links, one per line"
-            aria-label="YouTube links"
-            disabled={ytBusy || down}
-            onChange={(e) => {
-              setYtText(e.target.value);
-              setYtRows([]);
-            }}
-          />{" "}
-          {ytRows.length === 0 && <button type="submit" disabled={ytBusy || down || !ytText.trim()}>{ytBusy ? "Looking up…" : "Look up"}</button>}
-        </p>
-        {ytRows.map((r) => (
-          <fieldset key={r.url}>
-            <legend><small className="muted">{r.url}</small></legend>
-            {r.error && <p className="error" role="alert">{r.error}</p>}
-            {!r.info && !r.error && <p><small className="muted">Looking up…</small></p>}
-            {r.info && (
-              <>
-                <p>
-                  <label>Title <input value={r.title} onChange={(e) => patchRow(r.url, { title: e.target.value })} /></label>{" "}
-                  <label>Artist <input value={r.artist} onChange={(e) => patchRow(r.url, { artist: e.target.value })} /></label>{" "}
-                  <label>Album (optional) <input value={r.album} onChange={(e) => patchRow(r.url, { album: e.target.value })} /></label>
-                </p>
-                <p>
-                  <label>
-                    <input type="checkbox" checked={r.ai} onChange={(e) => patchRow(r.url, { ai: e.target.checked })} /> Made by AI (shows a badge)
-                    {r.info.aiLabel
-                      ? <small className="muted"> · YouTube labels this video as made with AI</small>
-                      : r.info.aiHint && <small className="muted"> · the video's description mentions AI</small>}
-                  </label>{" "}
-                  <small className="muted">{Math.floor(r.info.duration / 60)}:{String(r.info.duration % 60).padStart(2, "0")}{r.info.tooLong ? " · too long for the server (max 2 hours)" : ""}</small>
-                </p>
-              </>
-            )}
-            <button type="button" className="link" onClick={() => setYtRows((rows) => rows.filter((x) => x.url !== r.url))}>Remove</button>
-          </fieldset>
-        ))}
-        {ytRows.length > 0 && (
-          <p>
-            <button type="submit" disabled={ytBusy || down || !ytRows.some(usable)}>
-              Add {ytRows.filter(usable).length > 1 ? `${ytRows.filter(usable).length} songs` : "to library"}
-            </button>
-          </p>
-        )}
-        {ytRows.length > 0 && !ytBusy && !ytRows.some(usable) && (
-          <p><small className="muted">{ytHint(ytRows)}</small></p>
-        )}
-        {ytErr && <p className="error" role="alert">{ytErr}</p>}
-      </form>
-      {ytRuns.length > 0 && (
-        <ul>
-          {ytRuns.map((r) => {
-            // The server reports before = number of steps and now = steps still to do.
-            const total = YOUTUBE_STEPS.length;
-            const done = Math.min(total, Math.max(0, (r.inboxBefore ?? total) - (r.inboxNow ?? total)));
-            return (
-              <li key={r.id}>
-                {r.label ?? "YouTube song"}:{" "}
-                {r.status === "requested"
-                  ? <small className="muted">waiting for a free download slot</small>
-                  : (
-                    <>
-                      <progress max={total} value={done} />{" "}
-                      <small className="muted">
-                        {r.inboxNow === null ? "starting…" : `step ${Math.min(total, done + 1)} of ${total}: ${YOUTUBE_STEPS[Math.min(total - 1, done)]}`}
-                      </small>
-                    </>
-                  )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
       {down && (
         <p className="error" role="alert">
           Home server unavailable: {home.error} <button className="link" onClick={() => void recheck()}>Check again</button>
         </p>
       )}
-      {enr?.status === "running" && (() => {
-        // The server reports before = number of steps and now = steps still to do.
-        const total = ENRICH_STEPS.length;
-        const done = Math.min(total, Math.max(0, (enr.inboxBefore ?? total) - (enr.inboxNow ?? total)));
-        return (
-          <p>
-            <progress max={total} value={done} />{" "}
-            <small className="muted">
-              {enr.inboxNow === null ? "Waiting for the server to start…" : `Step ${Math.min(total, done + 1)} of ${total}: ${ENRICH_STEPS[Math.min(total - 1, done)]}`}
-            </small>
-          </p>
-        );
-      })()}
-      {imp?.status === "running" && imp.inboxBefore !== null && imp.inboxNow !== null && imp.inboxBefore > 0 && (
-        <p>
-          <progress max={imp.inboxBefore} value={Math.max(0, imp.inboxBefore - imp.inboxNow)} />{" "}
-          <small className="muted">{Math.max(0, imp.inboxBefore - imp.inboxNow)} of {imp.inboxBefore} files imported</small>
+      {(busy || msg) && (
+        <p className="status" role="status">
+          {busy && <span className="spinner" aria-hidden="true" />}
+          {msg}
         </p>
       )}
+
+      <section className="tool">
+        <h3>Add songs from YouTube</h3>
+        <p className="muted">Paste one link per line. Check the names, then add them. Songs are downloaded and added to the library for you.</p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (ytRows.length && !ytBusy) void addAll();
+            else if (ytText.trim()) void lookUp();
+          }}
+        >
+          <textarea
+            className="yt-input"
+            value={ytText}
+            rows={4}
+            placeholder={"https://youtu.be/…\nhttps://youtu.be/…\nhttps://youtu.be/…"}
+            aria-label="YouTube links"
+            spellCheck={false}
+            disabled={ytBusy || down}
+            onChange={(e) => {
+              setYtText(e.target.value);
+              setYtRows([]);
+            }}
+          />
+          {ytRows.length === 0 && (
+            <p><button type="submit" className="primary" disabled={ytBusy || down || !ytText.trim()}>{ytBusy ? "Looking up…" : "Look up"}</button></p>
+          )}
+          {ytRows.map((r) => (
+            <fieldset key={r.url}>
+              <legend><small className="muted">{r.url}</small></legend>
+              {r.error && <p className="error" role="alert">{r.error}</p>}
+              {!r.info && !r.error && <p><small className="muted">Looking up…</small></p>}
+              {r.info && (
+                <>
+                  <div className="yt-fields">
+                    <label>Title <input value={r.title} onChange={(e) => patchRow(r.url, { title: e.target.value })} /></label>
+                    <label>Artist <input value={r.artist} onChange={(e) => patchRow(r.url, { artist: e.target.value })} /></label>
+                    <label>Album (optional) <input value={r.album} onChange={(e) => patchRow(r.url, { album: e.target.value })} /></label>
+                  </div>
+                  <p>
+                    <label>
+                      <input type="checkbox" checked={r.ai} onChange={(e) => patchRow(r.url, { ai: e.target.checked })} /> Made by AI (shows a badge)
+                      {r.info.aiLabel
+                        ? <small className="muted"> · YouTube labels this video as made with AI</small>
+                        : r.info.aiHint && <small className="muted"> · the video's description mentions AI</small>}
+                    </label>{" "}
+                    <small className="muted">{Math.floor(r.info.duration / 60)}:{String(r.info.duration % 60).padStart(2, "0")}{r.info.tooLong ? " · too long for the server (max 2 hours)" : ""}</small>
+                  </p>
+                </>
+              )}
+              <button type="button" className="link" onClick={() => setYtRows((rows) => rows.filter((x) => x.url !== r.url))}>Remove</button>
+            </fieldset>
+          ))}
+          {ytRows.length > 0 && (
+            <p>
+              <button type="submit" className="primary" disabled={ytBusy || down || !ytRows.some(usable)}>
+                Add {ytRows.filter(usable).length > 1 ? `${ytRows.filter(usable).length} songs` : "to library"}
+              </button>{" "}
+              <button type="button" className="link" disabled={ytBusy} onClick={() => { setYtRows([]); setYtText(""); }}>Start over</button>
+            </p>
+          )}
+          {ytRows.length > 0 && !ytBusy && !ytRows.some(usable) && (
+            <p><small className="muted">{ytHint(ytRows)}</small></p>
+          )}
+          {ytErr && <p className="error" role="alert">{ytErr}</p>}
+        </form>
+        {ytRuns.length > 0 && (
+          <ul>
+            {ytRuns.map((r) => {
+              // The server reports before = number of steps and now = steps still to do.
+              const total = YOUTUBE_STEPS.length;
+              const done = Math.min(total, Math.max(0, (r.inboxBefore ?? total) - (r.inboxNow ?? total)));
+              return (
+                <li key={r.id}>
+                  {r.label ?? "YouTube song"}:{" "}
+                  {r.status === "requested"
+                    ? <small className="muted">waiting for a free download slot</small>
+                    : (
+                      <>
+                        <progress max={total} value={done} />{" "}
+                        <small className="muted">
+                          {r.inboxNow === null ? "starting…" : `step ${Math.min(total, done + 1)} of ${total}: ${YOUTUBE_STEPS[Math.min(total - 1, done)]}`}
+                        </small>
+                      </>
+                    )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="tool">
+        <h3>Import from the NAS inbox</h3>
+        <p className="muted">
+          Put music files in the inbox folder on the NAS, then import them: they are sorted into the library, scanned and synced.
+          {home?.ok && home.autoImport ? " Files added to the inbox are also imported automatically." : ""}
+          {home?.ok && (home.waiting ?? 0) > 0 ? ` ${home.waiting} file${home.waiting === 1 ? "" : "s"} waiting in the inbox now.` : ""}
+        </p>
+        <p><button disabled={scanning || imp !== null || down} onClick={() => void organize()}>Import inbox and update library</button></p>
+        {imp?.status === "running" && imp.inboxBefore !== null && imp.inboxNow !== null && imp.inboxBefore > 0 && (
+          <p>
+            <progress max={imp.inboxBefore} value={Math.max(0, imp.inboxBefore - imp.inboxNow)} />{" "}
+            <small className="muted">{Math.max(0, imp.inboxBefore - imp.inboxNow)} of {imp.inboxBefore} files imported</small>
+          </p>
+        )}
+      </section>
+
+      <section className="tool">
+        <h3>Covers and genres</h3>
+        <p className="muted">Fetches missing cover art and genres for songs already in the library. This also runs every night.</p>
+        <p><button disabled={scanning || enr !== null || down} onClick={() => void enrich()}>Fill in covers and genres now</button></p>
+        {enr?.status === "running" && (() => {
+          // The server reports before = number of steps and now = steps still to do.
+          const total = ENRICH_STEPS.length;
+          const done = Math.min(total, Math.max(0, (enr.inboxBefore ?? total) - (enr.inboxNow ?? total)));
+          return (
+            <p>
+              <progress max={total} value={done} />{" "}
+              <small className="muted">
+                {enr.inboxNow === null ? "Waiting for the server to start…" : `Step ${Math.min(total, done + 1)} of ${total}: ${ENRICH_STEPS[Math.min(total - 1, done)]}`}
+              </small>
+            </p>
+          );
+        })()}
+      </section>
+
       {runs.length > 0 && (
         <details>
-          <summary>Beets history</summary>
+          <summary>History of imports and jobs</summary>
           <ul>
             {runs.map((r) => (
               <li key={r.id}>

@@ -7,7 +7,7 @@
 # embedded in the files, and genres. It uses the full plugin list from config.yaml.
 # Each step only touches albums that still lack the data, so a night with nothing new ends in seconds.
 #
-# Each night is also reported to the MyMusic Worker, so the Library tools tab shows it under "Beets history". It uses the
+# Each night is also reported to the MyMusic Worker, so the Library tools tab shows it under "History of imports and jobs". It uses the
 # same key file as the mymusic-api container; if the Worker cannot be reached the job still runs and only logs locally.
 
 LOG="/mnt/user/appdata/beets/enrich.log"

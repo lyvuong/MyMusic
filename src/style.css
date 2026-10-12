@@ -42,7 +42,8 @@ details > summary { cursor: pointer; color: var(--muted); }
 header { position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 96%, transparent); backdrop-filter: blur(10px); padding: 12px 0 8px; z-index: 2; }
 header h1 { margin: 0 0 10px; font-size: 1.35rem; display: flex; align-items: center; gap: 10px; }
 header h1 small { font-weight: normal; }
-nav { display: flex; gap: 6px; flex-wrap: wrap; }
+nav { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+nav button { flex: none; white-space: nowrap; }
 nav button.active, .seg button.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
 .search-box { position: sticky; top: var(--header-h, 0px); z-index: 1; background: var(--bg); padding: 10px 0 12px; }
 .search { width: 100%; padding-right: 42px; }
@@ -202,3 +203,17 @@ button.star:hover:not(:disabled) { background: none; color: var(--accent); }
 .fixv-names input { width: 100%; border-radius: 12px; }
 .fixv-reason { flex: none; max-width: 9em; text-align: right; }
 @media (max-width: 640px) { .fixv-reason { display: none; } }
+
+/* Owner tools and account sections */
+.tool { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 4px 16px 8px; margin: 16px 0; }
+.tool h3 { margin: 12px 0 4px; }
+.tool > p.muted { margin: 0 0 10px; }
+.status { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-radius: 12px; background: var(--hover); margin: 8px 0; }
+.status .spinner { margin: 0 .5em 0 0; }
+.yt-input { display: block; width: 100%; min-height: 6.5em; resize: vertical; font: inherit; line-height: 1.5; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: inherit; }
+.yt-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.yt-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.yt-fields label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); }
+.yt-fields input { width: 100%; border-radius: 12px; font-size: 1rem; color: var(--fg); }
+fieldset { border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; }
+.empty { text-align: center; padding: 48px 16px; }
