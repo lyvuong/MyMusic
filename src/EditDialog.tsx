@@ -60,6 +60,8 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
   const [focus, setFocus] = useState<string | null>(null);
   const [asking, setAsking] = useState<string | null>(null);
   const [aiNote, setAiNote] = useState("");
+  // What the AI was asked about per field, so the final text can be remembered as the correction.
+  const asked = useRef<Record<string, string>>({});
   const first = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -81,6 +83,7 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
     setError("");
     try {
       const { results } = await api.restoreVietnamese([{ key, text: values[key]!.trim(), artist: values.artist?.trim() || undefined, album: values.album?.trim() || undefined }]);
+      asked.current[key] = values[key]!.trim();
       const text = results[0]?.text;
       if (text && hasVietnamese(text)) setValues((v) => ({ ...v, [key]: text }));
       else setAiNote("The AI did not find accents to add. It may not be Vietnamese.");
@@ -97,6 +100,9 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
     setError("");
     try {
       await onSave(values);
+      // Teach the AI: the name as saved (your edit, or its answer, or the original if you refused it).
+      const learn = Object.entries(asked.current).map(([key, from]) => ({ from, to: (values[key] ?? "").trim() })).filter((p) => p.from && p.to);
+      if (learn.length > 0) void api.saveVietnameseCorrections(learn).catch(() => undefined);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save");

@@ -12,7 +12,7 @@ interface Fix {
   to: string;
   /** The songs that carry this name (a title is applied to each of them). */
   ids: string[];
-  reason: "typed" | "case" | "accents";
+  reason: "typed" | "case" | "accents" | "learned";
   on: boolean;
 }
 
@@ -20,7 +20,7 @@ interface Ask { id: string; kind: Kind; from: string; ids: string[]; artist?: st
 
 const KINDS: [Kind, string][] = [["album", "Albums"], ["artist", "Artists"], ["title", "Titles"]];
 const KIND_LABEL: Record<Kind, string> = { album: "Album", artist: "Artist", title: "Song" };
-const REASON: Record<Fix["reason"], string> = { typed: "typed marks", case: "capitals / spacing", accents: "AI: accents" };
+const REASON: Record<Fix["reason"], string> = { typed: "typed marks", case: "capitals / spacing", accents: "AI: accents", learned: "your earlier fix" };
 
 /** Finds what the clean-up can fix by rules, and which names are worth asking the AI about. Runs in the browser. */
 function scan(tracks: Track[]): { fixes: Fix[]; asks: Ask[] } {
@@ -76,8 +76,20 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
   const patch = (id: string, p: Partial<Fix>) => setRows((rs) => (rs ?? []).map((r) => (r.id === id ? { ...r, ...p } : r)));
 
   /** Rules first: instant, in the browser. */
-  const doScan = () => {
+  const doScan = async () => {
     const r = scan(tracks);
+    // Names corrected before are used as they were corrected; names the owner said to leave alone are not offered.
+    try {
+      const known = new Map((await api.vietnameseCorrections()).corrections.map((c) => [c.from, c.to]));
+      r.asks = r.asks.filter((a) => {
+        const to = known.get(a.from);
+        if (to === undefined) return true;
+        if (to !== a.from) r.fixes.push({ id: a.id, kind: a.kind, from: a.from, to, ids: a.ids, reason: "learned", on: true });
+        return false;
+      });
+    } catch {
+      /* the scan still works without them */
+    }
     setRows(r.fixes);
     setAsks(r.asks);
     setChosen(new Set());
@@ -167,6 +179,19 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
           failed.push(`${chunk.length} titles: ${e instanceof Error ? e.message : "failed"}`);
         }
       }
+      // Remember what was decided about AI and earlier-corrected names, for the whole family: the names as applied
+      // (including your edits), and the ones you unticked, which are left alone from now on.
+      const learn = [
+        ...(rows ?? []).filter((r) => (r.reason === "accents" || r.reason === "learned") && applied.has(r.id)).map((r) => ({ from: r.from, to: r.to.trim() })),
+        ...(rows ?? []).filter((r) => (r.reason === "accents" || r.reason === "learned") && !r.on).map((r) => ({ from: r.from, to: r.from })),
+      ];
+      if (learn.length > 0) {
+        try {
+          for (let i = 0; i < learn.length; i += 200) await api.saveVietnameseCorrections(learn.slice(i, i + 200));
+        } catch {
+          notes.add("The corrections could not be remembered for the AI.");
+        }
+      }
       await refresh();
       const stillOpen = new Set(failed.length ? picked.filter((p) => !applied.has(p.id)).map((p) => p.id) : []);
       setRows((rs) => (rs ?? []).filter((r) => !applied.has(r.id) || stillOpen.has(r.id)));
@@ -183,7 +208,7 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
   return (
     <section className="fixv">
       <p>
-        <button className="primary" onClick={doScan} disabled={busy}>{rows === null ? "Scan the library" : "Scan again"}</button>{" "}
+        <button className="primary" onClick={() => void doScan()} disabled={busy}>{rows === null ? "Scan the library" : "Scan again"}</button>{" "}
         {busy && <button onClick={() => { stop.current = true; }}>Stop</button>}
       </p>
       {msg && <p className={/failed|could not|error/i.test(msg) ? "error" : "muted"}>{busy && <span className="spinner" />}{msg}</p>}

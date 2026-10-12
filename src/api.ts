@@ -79,6 +79,9 @@ export const api = {
   /** AI: accents for up to 25 names written without them. Only answers that add accents and nothing else come back. */
   restoreVietnamese: (items: { key: string; text: string; artist?: string; album?: string }[]) =>
     call<{ results: { key: string; text: string }[] }>("POST", "/api/vietnamese/restore", { items }),
+  /** What the owner corrected the AI to before (family-wide); from = to means "leave this name alone". */
+  vietnameseCorrections: () => call<{ corrections: { from: string; to: string }[] }>("GET", "/api/vietnamese/corrections"),
+  saveVietnameseCorrections: (items: { from: string; to: string }[]) => call<{ saved: number }>("POST", "/api/vietnamese/corrections", { items }),
   /** Renames an artist or album on all its songs; an existing name merges the two. */
   renameGroup: (kind: "artist" | "album", from: string, to: string) => call<{ updated: number; filesUpdated: boolean; warning: string }>("POST", "/api/library/rename", { kind, from, to }),
   setAlbumCover: (album: string, image: string) => call<{ ok: boolean; filesUpdated: boolean; warning: string }>("POST", "/api/library/cover", { album, image }),

@@ -1,4 +1,4 @@
-import { onlyAddsMarks } from "../shared/vietnamese";
+import { fold, onlyAddsMarks } from "../shared/vietnamese";
 
 /**
  * Restores Vietnamese accents on names written without them ("Con Yeu Em Mai" -> "Còn Yêu Em Mãi"), with Workers AI.
@@ -36,16 +36,64 @@ const SCHEMA = {
 
 const one = (s: string | undefined) => (s ?? "").replace(/[\r\n|]+/g, " ").trim().slice(0, 200);
 
-/** Suggestions for the items that the model changed validly; the rest are left out. */
-export async function restoreAccents(env: Env, items: AccentItem[]): Promise<{ key: string; text: string }[]> {
+export interface Correction { from: string; to: string }
+
+/** The same name written with different spacing or Unicode form is the same name. */
+const norm = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim();
+
+export async function loadCorrections(db: D1Database, familyId: string): Promise<Correction[]> {
+  const rows = await db.prepare("SELECT from_text, to_text FROM name_corrections WHERE family_id = ?").bind(familyId).all<{ from_text: string; to_text: string }>();
+  return rows.results.map((r) => ({ from: r.from_text, to: r.to_text }));
+}
+
+export async function saveCorrections(db: D1Database, familyId: string, uid: string, pairs: Correction[]): Promise<number> {
+  const now = Date.now();
+  const stmt = db.prepare(
+    "INSERT INTO name_corrections (family_id, from_text, to_text, updated_by, updated_at) VALUES (?, ?, ?, ?, ?) " +
+      "ON CONFLICT(family_id, from_text) DO UPDATE SET to_text = excluded.to_text, updated_by = excluded.updated_by, updated_at = excluded.updated_at",
+  );
+  const rows = pairs.map((p) => ({ from: norm(p.from), to: norm(p.to) })).filter((p) => p.from && p.to);
+  for (let i = 0; i < rows.length; i += 50) {
+    await db.batch(rows.slice(i, i + 50).map((p) => stmt.bind(familyId, p.from, p.to, uid, now)));
+  }
+  return rows.length;
+}
+
+/**
+ * Suggestions for the items that the model changed validly; the rest are left out. `learned` are the family's earlier
+ * corrections: an exact repeat of a corrected name is answered from them without the AI, and the ones that share words
+ * with the rest are shown to the model as examples to follow.
+ */
+export async function restoreAccents(env: Env, items: AccentItem[], learned: Correction[] = []): Promise<{ key: string; text: string }[]> {
+  const known = new Map(learned.map((c) => [c.from, c.to]));
+  const results: { key: string; text: string }[] = [];
+  const rest: AccentItem[] = [];
+  for (const it of items) {
+    const to = known.get(norm(it.text));
+    if (to === undefined) rest.push(it);
+    else if (to !== norm(it.text)) results.push({ key: it.key, text: to });
+    // to = from: the owner said to leave it alone, so nothing is suggested
+  }
+  if (rest.length === 0) return results;
   if (!env.AI) throw new VietnameseError(501, "AI is not configured");
+  items = rest;
+  const words = new Set(items.flatMap((it) => fold(it.text).split(" ")).filter((w) => w.length >= 2));
+  const examples = learned
+    .filter((c) => c.from !== c.to && fold(c.from).split(" ").some((w) => words.has(w)))
+    .slice(0, 25)
+    .map((c) => `${one(c.from)} -> ${one(c.to)}`);
   const lines = items.map((it, i) => `${i + 1}|${one(it.text)}|artist: ${one(it.artist) || "-"}|album: ${one(it.album) || "-"}`).join("\n");
   let out: unknown;
   try {
     const res = (await env.AI.run(MODEL, {
       messages: [
         { role: "system", content: SYSTEM },
-        { role: "user", content: `Lines (number|text|artist|album):\n${lines}\n\nReturn {"results":[{"n":<line number>,"text":<text with accents>}]} for every line.` },
+        {
+          role: "user",
+          content:
+            (examples.length ? `Corrections the owner made before (follow them for the same words and names):\n${examples.join("\n")}\n\n` : "") +
+            `Lines (number|text|artist|album):\n${lines}\n\nReturn {"results":[{"n":<line number>,"text":<text with accents>}]} for every line.`,
+        },
       ],
       max_tokens: 1500,
       temperature: 0.1,
@@ -57,7 +105,6 @@ export async function restoreAccents(env: Env, items: AccentItem[]): Promise<{ k
   }
   const parsed = parse(out);
   if (!parsed) throw new VietnameseError(502, "The AI answer could not be read. Try again.");
-  const results: { key: string; text: string }[] = [];
   const seen = new Set<number>();
   for (const r of Array.isArray(parsed.results) ? parsed.results : []) {
     const n = Number(r?.n);

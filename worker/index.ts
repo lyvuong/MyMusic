@@ -16,7 +16,7 @@ import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
-import { restoreAccents, VietnameseError, type AccentItem } from "./vietnamese";
+import { loadCorrections, restoreAccents, saveCorrections, VietnameseError, type AccentItem } from "./vietnamese";
 
 type Vars = { user: User; family: Membership };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -320,11 +320,34 @@ app.post("/api/vietnamese/restore", async (c) => {
     items.push({ key: it.key, text, artist: typeof it.artist === "string" ? it.artist.slice(0, 200) : undefined, album: typeof it.album === "string" ? it.album.slice(0, 200) : undefined });
   }
   try {
-    return c.json({ results: await restoreAccents(c.env, items) });
+    const learned = await loadCorrections(c.env.DB, c.get("family").familyId);
+    return c.json({ results: await restoreAccents(c.env, items, learned) });
   } catch (e) {
     if (e instanceof VietnameseError) return c.json({ error: e.message }, e.status);
     throw e;
   }
+});
+
+/** The family's saved corrections (what the owner changed the AI's suggestions to), so the page can skip or hide names. */
+app.get("/api/vietnamese/corrections", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  return c.json({ corrections: await loadCorrections(c.env.DB, c.get("family").familyId) });
+});
+
+/** Remembers corrections for the whole family; from = to means "leave this name alone". */
+app.post("/api/vietnamese/corrections", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const b = await c.req.json<{ items?: unknown }>().catch(() => null);
+  const raw = Array.isArray(b?.items) ? (b.items as Record<string, unknown>[]) : null;
+  if (!raw || raw.length === 0 || raw.length > 200) return c.json({ error: "send 1 to 200 corrections" }, 400);
+  const pairs: { from: string; to: string }[] = [];
+  for (const it of raw) {
+    const from = typeof it?.from === "string" ? it.from.trim() : "";
+    const to = typeof it?.to === "string" ? it.to.trim() : "";
+    if (!from || !to || from.length > 200 || to.length > 200) return c.json({ error: "bad correction" }, 400);
+    pairs.push({ from, to });
+  }
+  return c.json({ saved: await saveCorrections(c.env.DB, c.get("family").familyId, c.get("user").uid, pairs) });
 });
 
 /**
