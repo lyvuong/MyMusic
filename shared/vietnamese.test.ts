@@ -70,5 +70,7 @@ describe("accent candidates and the AI guard", () => {
     expect(onlyAddsMarks("Con Yeu Em Mai", "Còn Yêu Anh Mãi")).toBe(false); // changed a word
     expect(onlyAddsMarks("Con Yeu Em Mai", "Con Yeu Em Mai")).toBe(false); // nothing changed
     expect(onlyAddsMarks("Con Yeu Em Mai", "")).toBe(false);
+    expect(onlyAddsMarks("Tinh Ca", "Tình Ca")).toBe(true);
+    expect(onlyAddsMarks("greatest hits", "Greatest Hits")).toBe(false); // only capitals: not Vietnamese
   });
 });

@@ -91,7 +91,10 @@ export function maybeNeedsAccents(text: string, contextIsVietnamese = false): bo
   return words.length >= 2 && words.every((w) => !ENGLISH.has(w) && !/[fjwz]/.test(w) && SYLLABLE_OK.test(w));
 }
 
-/** The guard for AI answers: the suggestion may only add marks and change case, never change or add letters. */
+/**
+ * The guard for AI answers: the suggestion may only add marks and change case, never change or add letters, and it must
+ * really hold Vietnamese letters (so a model that just capitalises an English name is not a fix).
+ */
 export function onlyAddsMarks(original: string, suggestion: string): boolean {
-  return suggestion.trim() !== "" && suggestion !== original && fold(original) === fold(suggestion);
+  return suggestion.trim() !== "" && suggestion !== original && hasVietnamese(suggestion) && fold(original) === fold(suggestion);
 }

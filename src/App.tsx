@@ -375,9 +375,9 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
           title="Edit song"
           onClose={close}
           fields={[
-            { key: "title", label: "Title", value: t.title, required: true },
-            { key: "artist", label: "Artist", value: t.artist, options: allArtists.map((a) => a.name) },
-            { key: "album", label: "Album", value: t.album, options: allAlbums.map((a) => a.name) },
+            { key: "title", label: "Title", value: t.title, required: true, accents: isOwner },
+            { key: "artist", label: "Artist", value: t.artist, options: allArtists.map((a) => a.name), accents: isOwner },
+            { key: "album", label: "Album", value: t.album, options: allAlbums.map((a) => a.name), accents: isOwner },
             { key: "trackNo", label: "Track number", value: t.trackNo ? String(t.trackNo) : "", numeric: true },
             { key: "ai", label: "Made by AI (shows a badge)", value: t.ai ? "1" : "", checkbox: true },
           ]}
@@ -398,7 +398,7 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
       <EditDialog
         title={kind === "album" ? "Rename or merge album" : "Rename or merge artist"}
         onClose={close}
-        fields={[{ key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, options: groups.filter((g) => g.name !== current).map((g) => g.name) }]}
+        fields={[{ key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, accents: isOwner, options: groups.filter((g) => g.name !== current).map((g) => g.name) }]}
         hint={(v) => {
           const to = nfc(v.name ?? "");
           const target = groups.find((g) => g.name !== current && nfc(g.name) === to);
@@ -730,7 +730,7 @@ function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promi
       <Organize syncNas={syncNas} home={home} recheck={recheck} />
       <section className="tool">
         <h3>Fix Vietnamese names</h3>
-        <p className="muted">Finds titles, albums and artists typed without accents or in the wrong case, and lets you review the fixes before saving.</p>
+        <p className="muted">Finds Vietnamese titles, albums and artists with missing accents or wrong capitals. You pick which names to ask the AI about, and review every fix before it is saved.</p>
         <p>
           <button onClick={() => setFixOpen((o) => !o)} disabled={down} title={down ? home.error : undefined}>
             {fixOpen ? "Hide the name fixer" : "Review names…"}

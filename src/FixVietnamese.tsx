@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Track } from "../shared/types";
-import { cleanVietnamese, hasVietnamese, maybeNeedsAccents } from "../shared/vietnamese";
+import { cleanVietnamese, fold, hasVietnamese, maybeNeedsAccents } from "../shared/vietnamese";
 import { api } from "./api";
 
 type Kind = "album" | "artist" | "title";
@@ -19,6 +19,7 @@ interface Fix {
 interface Ask { id: string; kind: Kind; from: string; ids: string[]; artist?: string; album?: string }
 
 const KINDS: [Kind, string][] = [["album", "Albums"], ["artist", "Artists"], ["title", "Titles"]];
+const KIND_LABEL: Record<Kind, string> = { album: "Album", artist: "Artist", title: "Song" };
 const REASON: Record<Fix["reason"], string> = { typed: "typed marks", case: "capitals / spacing", accents: "AI: accents" };
 
 /** Finds what the clean-up can fix by rules, and which names are worth asking the AI about. Runs in the browser. */
@@ -57,8 +58,8 @@ function scan(tracks: Track[]): { fixes: Fix[]; asks: Ask[] } {
 }
 
 /**
- * Owner tool: cleans Vietnamese names. Typed marks and capitals are fixed by rules; names without accents are sent to
- * the AI in batches. Nothing is changed until the owner ticks the rows and applies them.
+ * Owner tool: cleans Vietnamese names. Typed marks and capitals are fixed by rules; names without accents are listed
+ * and the owner picks which ones to send to the AI. Nothing is changed until the rows are applied.
  */
 export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: () => Promise<void> }) {
   const [rows, setRows] = useState<Fix[] | null>(null);
@@ -66,42 +67,71 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
+  const stop = useRef(false);
+  // Names that may be missing accents are only listed; the AI is asked about the ones you choose.
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState("");
+  const [shown, setShown] = useState(100);
+
+  const patch = (id: string, p: Partial<Fix>) => setRows((rs) => (rs ?? []).map((r) => (r.id === id ? { ...r, ...p } : r)));
+
+  /** Rules first: instant, in the browser. */
   const doScan = () => {
     const r = scan(tracks);
     setRows(r.fixes);
     setAsks(r.asks);
-    setMsg(r.fixes.length + r.asks.length === 0 ? "Nothing to fix: every Vietnamese name already looks right." : "");
+    setChosen(new Set());
+    setFilter("");
+    setShown(100);
+    setMsg(
+      r.fixes.length + r.asks.length === 0
+        ? "Nothing to fix: every Vietnamese name already looks right."
+        : r.fixes.length
+          ? `${r.fixes.length} fix${r.fixes.length === 1 ? "" : "es"} found by rules.${r.asks.length ? " Pick names below to ask the AI about." : ""}`
+          : "No rule-based fixes. Pick names below to ask the AI about.",
+    );
   };
 
-  const patch = (id: string, p: Partial<Fix>) => setRows((rs) => (rs ?? []).map((r) => (r.id === id ? { ...r, ...p } : r)));
-
-  const askAi = async () => {
-    const todo = asks;
+  /** Asks the AI about the given names, in batches, and adds the valid suggestions as rows. */
+  const askAi = async (todo: Ask[]) => {
+    stop.current = false;
     setBusy(true);
-    setMsg("");
     let found = 0;
+    let done = 0;
+    const asked = new Set<string>();
     try {
-      for (let i = 0; i < todo.length; i += 25) {
+      for (let i = 0; i < todo.length && !stop.current; i += 25) {
         const batch = todo.slice(i, i + 25);
         setMsg(`Asking the AI… ${i} of ${todo.length} names`);
         const { results } = await api.restoreVietnamese(batch.map((a) => ({ key: a.id, text: a.from, artist: a.artist, album: a.album })));
         const answers = new Map(results.map((r) => [r.key, r.text]));
         const added: Fix[] = [];
         for (const a of batch) {
+          asked.add(a.id);
           const to = answers.get(a.id);
-          if (to) added.push({ id: a.id, kind: a.kind, from: a.from, to, ids: a.ids, reason: "accents", on: false });
+          // Only a real Vietnamese answer counts: capitalising an English name is not a fix.
+          if (to && hasVietnamese(to)) added.push({ id: a.id, kind: a.kind, from: a.from, to, ids: a.ids, reason: "accents", on: true });
         }
         found += added.length;
-        setRows((rs) => [...(rs ?? []), ...added]);
+        done += batch.length;
+        setRows((rs) => [...(rs ?? []).filter((r) => !added.some((x) => x.id === r.id)), ...added]);
       }
-      setAsks([]);
-      setMsg(`The AI suggested accents for ${found} of ${todo.length} names. Review them below, then tick the ones that are right.`);
+      setMsg(
+        `${stop.current ? `Stopped after ${done} of ${todo.length} names. ` : ""}The AI added accents to ${found} of ${done} name${done === 1 ? "" : "s"}` +
+          `${found ? ". Untick any that are wrong, then apply." : ": the others are not Vietnamese or it was not sure."}`,
+      );
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "The AI request failed");
+      setMsg(`${e instanceof Error ? e.message : "The AI request failed"} (${found} fixes found before that).`);
     } finally {
+      // Asked names leave the list, whether or not the AI changed them, so they are not asked twice.
+      setAsks((as) => as.filter((a) => !asked.has(a.id)));
+      setChosen(new Set());
       setBusy(false);
     }
   };
+
+  const q = fold(filter);
+  const matching = asks.filter((a) => !q || fold(a.from).includes(q) || fold(a.artist ?? "").includes(q));
 
   const picked = (rows ?? []).filter((r) => r.on && r.to.trim() !== "" && r.to.trim() !== r.from);
 
@@ -152,18 +182,48 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
 
   return (
     <section className="fixv">
-      <h3>Fix Vietnamese names</h3>
-      <p className="muted">
-        Finds names typed in ASCII (<code>Hu+o+ng Ca^`n</code>), written without accents (<code>Con Yeu Em Mai</code>) or with wrong capitals,
-        for titles, albums and artists. You review every change before it is applied; it also rewrites the file tags.
-      </p>
       <p>
-        <button onClick={doScan} disabled={busy}>{rows === null ? "Scan the library" : "Scan again"}</button>{" "}
-        {asks.length > 0 && (
-          <button className="primary" onClick={() => void askAi()} disabled={busy}>Ask the AI about {asks.length} names without accents</button>
-        )}
+        <button className="primary" onClick={doScan} disabled={busy}>{rows === null ? "Scan the library" : "Scan again"}</button>{" "}
+        {busy && <button onClick={() => { stop.current = true; }}>Stop</button>}
       </p>
       {msg && <p className={/failed|could not|error/i.test(msg) ? "error" : "muted"}>{busy && <span className="spinner" />}{msg}</p>}
+      {asks.length > 0 && (
+        <div className="fixv-asks">
+          <h4>May be missing accents <small>{asks.length}</small></h4>
+          <p className="muted">
+            These look like Vietnamese written without accents, but some may be English. Tick the ones you want and ask the AI; it only
+            changes names it is sure about.
+          </p>
+          <p className="fixv-bar">
+            <input type="search" placeholder="Filter names or artists" aria-label="Filter names" value={filter} onChange={(e) => { setFilter(e.target.value); setShown(100); }} />
+            <button className="link" disabled={busy} onClick={() => setChosen(new Set(matching.slice(0, shown).map((a) => a.id)))}>Tick shown</button>
+            <button className="link" disabled={busy || chosen.size === 0} onClick={() => setChosen(new Set())}>Clear</button>
+            <button className="primary" disabled={busy || chosen.size === 0} onClick={() => void askAi(asks.filter((a) => chosen.has(a.id)))}>
+              Ask the AI about {chosen.size} {chosen.size === 1 ? "name" : "names"}
+            </button>
+          </p>
+          <ul className="fixv-list">
+            {matching.slice(0, shown).map((a) => (
+              <li key={a.id} className={chosen.has(a.id) ? "picked" : ""}>
+                <input
+                  className="pick"
+                  type="checkbox"
+                  checked={chosen.has(a.id)}
+                  disabled={busy}
+                  aria-label={`Ask the AI about ${a.from}`}
+                  onChange={(e) => setChosen((c) => { const n = new Set(c); if (e.target.checked) n.add(a.id); else n.delete(a.id); return n; })}
+                />
+                <div className="fixv-names">
+                  <strong>{a.from}</strong>
+                  <small className="muted">{[KIND_LABEL[a.kind], a.kind !== "artist" ? a.artist : "", a.ids.length > 1 ? `${a.ids.length} songs` : ""].filter(Boolean).join(" · ")}</small>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {matching.length > shown && <p><button className="link" onClick={() => setShown((n) => n + 100)}>Show {Math.min(100, matching.length - shown)} more of {matching.length - shown}</button></p>}
+          {matching.length === 0 && <p className="muted">No name matches the filter.</p>}
+        </div>
+      )}
       {rows !== null && rows.length > 0 && (
         <>
           <p className="fixv-bar">
