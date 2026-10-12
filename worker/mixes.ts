@@ -1,4 +1,4 @@
-import { DAYPARTS, DAYPART_HINT, suggest, SuggestError, type Daypart } from "./suggest";
+import { DAYPARTS, DAYPART_HINT, loadRows, suggest, SuggestError, type Daypart } from "./suggest";
 
 /**
  * Nightly AI mixes. The home server calls /api/beets/agent/mixes once a night (the free Workers plan has no spare cron
@@ -37,10 +37,12 @@ function parseIds(s: string): string[] {
 export async function buildMixesFor(env: Env, familyId: string, uid: string, force = false): Promise<number> {
   const existing = new Map((await getMixes(env.DB, uid)).map((m) => [m.daypart, m.generatedAt]));
   let saved = 0;
+  let rows: Awaited<ReturnType<typeof loadRows>> | undefined; // one read of the library for all four day-parts
   for (const daypart of DAYPARTS) {
     if (!force && Date.now() - (existing.get(daypart) ?? 0) < FRESH_MS) continue;
     try {
-      const s = await suggest(env, familyId, uid, DAYPART_HINT[daypart]);
+      rows ??= await loadRows(env, familyId, uid);
+      const s = await suggest(env, familyId, uid, DAYPART_HINT[daypart], rows);
       await env.DB.prepare(
         "INSERT INTO daily_mixes (uid, family_id, daypart, title, intro, track_ids, generated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT(uid, daypart) DO UPDATE SET family_id = excluded.family_id, title = excluded.title, intro = excluded.intro, " +

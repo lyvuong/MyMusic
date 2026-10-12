@@ -71,8 +71,8 @@ export function buildContext(all: Row[]) {
   return { rated, loved, disliked, fav, candidates };
 }
 
-export async function suggest(env: Env, familyId: string, uid: string, mood: string): Promise<Suggestion> {
-  if (!env.AI) throw new SuggestError(501, "AI suggestions are not configured");
+/** Every song of the family with the caller's rating and the family's plays over 90 days: one read of the whole library. */
+export async function loadRows(env: Env, familyId: string, uid: string): Promise<Row[]> {
   const since = Date.now() - 90 * 24 * 3600 * 1000;
   const rows = await env.DB.prepare(
     "SELECT t.id, t.title, t.artist, t.album, r.rating, p.n AS plays FROM tracks t " +
@@ -80,7 +80,13 @@ export async function suggest(env: Env, familyId: string, uid: string, mood: str
       "LEFT JOIN (SELECT track_id, COUNT(*) AS n FROM plays WHERE family_id = ? AND played_at > ? GROUP BY track_id) p ON p.track_id = t.id " +
       "WHERE t.family_id = ? AND t.deleted = 0",
   ).bind(uid, familyId, since, familyId).all<Row>();
-  const all = rows.results;
+  return rows.results;
+}
+
+/** `rows` lets a caller that makes several suggestions in a row (the nightly mixes) read the library only once. */
+export async function suggest(env: Env, familyId: string, uid: string, mood: string, rows?: Row[]): Promise<Suggestion> {
+  if (!env.AI) throw new SuggestError(501, "AI suggestions are not configured");
+  const all = rows ?? await loadRows(env, familyId, uid);
   if (all.length === 0) throw new SuggestError(400, "The library is empty");
   const ctx = buildContext(all);
   if (ctx.rated.length < MIN_RATINGS && !mood) throw new SuggestError(400, `Rate at least ${MIN_RATINGS} songs first, or describe a mood.`);
