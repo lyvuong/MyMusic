@@ -61,7 +61,7 @@ function scan(tracks: Track[]): { fixes: Fix[]; asks: Ask[] } {
  * Owner tool: cleans Vietnamese names. Typed marks and capitals are fixed by rules; names without accents are listed
  * and the owner picks which ones to send to the AI. Nothing is changed until the rows are applied.
  */
-export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: () => Promise<void> }) {
+export function FixVietnamese({ tracks, refresh, onBack }: { tracks: Track[]; refresh: () => Promise<void>; onBack: () => void }) {
   const [rows, setRows] = useState<Fix[] | null>(null);
   const [asks, setAsks] = useState<Ask[]>([]);
   const [busy, setBusy] = useState(false);
@@ -73,6 +73,8 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
   const [filter, setFilter] = useState("");
   const [shown, setShown] = useState(100);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
+  // Two pages: the names to look at, and the changes to review (a separate page, so nothing is lost below a long list).
+  const [view, setView] = useState<"names" | "review">("names");
 
   const patch = (id: string, p: Partial<Fix>) => setRows((rs) => (rs ?? []).map((r) => (r.id === id ? { ...r, ...p } : r)));
 
@@ -140,9 +142,12 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
             : "The AI did not suggest any change.") +
           (noChange.length ? ` Left as they are: ${list(noChange)} (not Vietnamese, or the AI was not sure).` : ""),
       );
-      // The suggestions are at the top of the review list: show them.
+      // Show what the AI suggested on the review page.
       setFresh(new Set(fixed.map((f) => f.id)));
-      if (fixed.length) requestAnimationFrame(() => document.querySelector(".fixv-list li.fresh")?.scrollIntoView({ block: "center", behavior: "smooth" }));
+      if (fixed.length) {
+        setView("review");
+        window.scrollTo(0, 0);
+      }
     } catch (e) {
       setMsg(`${e instanceof Error ? e.message : "The AI request failed"} (${fixed.length} suggestions found before that).`);
     } finally {
@@ -217,43 +222,74 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
     }
   };
 
+  const flipTo = (v: "names" | "review") => {
+    setView(v);
+    setFresh(new Set());
+    window.scrollTo(0, 0);
+  };
+
+  if (view === "review") {
+    return (
+      <section className="fixv">
+        <p><button className="link" onClick={() => flipTo("names")} disabled={busy}>← Back to names</button></p>
+        <h2>Review changes <small>{(rows ?? []).length}</small></h2>
+        <p className="muted">Nothing is saved until you press Apply. Edit any new name, or untick the ones that are wrong; what you decide is remembered for the AI.</p>
+        {msg && <p className={/failed|could not|error/i.test(msg) ? "error" : "muted"} role="status">{busy && <span className="spinner" />}{msg}</p>}
+        {(rows ?? []).length === 0 ? (
+          <p className="muted">No changes to review. <button className="link" onClick={() => flipTo("names")}>Back to names</button></p>
+        ) : (
+          <>
+            <p className="fixv-bar">
+              <strong>{picked.length} selected</strong>
+              <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: true })))}>Select all</button>
+              <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: false })))}>Select none</button>
+              <button className="primary" onClick={() => void apply()} disabled={busy || picked.length === 0}>Apply {picked.length} changes</button>
+            </p>
+            {KINDS.map(([kind, label]) => {
+              const list = (rows ?? []).filter((r) => r.kind === kind);
+              if (list.length === 0) return null;
+              return (
+                <div key={kind}>
+                  <h4>{label} <small>{list.length}</small></h4>
+                  <ul className="fixv-list">
+                    {list.map((r) => (
+                      <li key={r.id} className={`${r.on ? "picked" : ""}${fresh.has(r.id) ? " fresh" : ""}`}>
+                        <input className="pick" type="checkbox" checked={r.on} disabled={busy} onChange={(e) => patch(r.id, { on: e.target.checked })} aria-label={`Change ${r.from}`} />
+                        <div className="fixv-names">
+                          <small className="muted">{r.from}{r.kind !== "album" && r.ids.length > 1 ? ` · ${r.ids.length} songs` : ""}{r.kind === "album" ? ` · ${r.ids.length} songs` : ""}</small>
+                          <input type="text" value={r.to} disabled={busy} onChange={(e) => patch(r.id, { to: e.target.value })} aria-label={`New name for ${r.from}`} />
+                        </div>
+                        <small className="fixv-reason">{REASON[r.reason]}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section className="fixv">
+      <p><button className="link" onClick={onBack} disabled={busy}>← Library tools</button></p>
+      <h2>Fix Vietnamese names</h2>
+      <p className="muted">
+        Finds Vietnamese titles, albums and artists with missing accents or wrong capitals. You choose which names to ask the AI about,
+        and review every change before it is saved.
+      </p>
       <p>
         <button className="primary" onClick={() => void doScan()} disabled={busy}>{rows === null ? "Scan the library" : "Scan again"}</button>{" "}
         {busy && <button onClick={() => { stop.current = true; }}>Stop</button>}
       </p>
-      {msg && <p className={/failed|could not|error/i.test(msg) ? "error" : "muted"}>{busy && <span className="spinner" />}{msg}</p>}
+      {msg && <p className={/failed|could not|error/i.test(msg) ? "error" : "muted"} role="status">{busy && <span className="spinner" />}{msg}</p>}
       {rows !== null && rows.length > 0 && (
-        <>
-          <p className="fixv-bar">
-            <strong>{picked.length} selected</strong>
-            <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: true })))}>Select all</button>
-            <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: false })))}>Select none</button>
-            <button className="primary" onClick={() => void apply()} disabled={busy || picked.length === 0}>Apply {picked.length} changes</button>
-          </p>
-          {KINDS.map(([kind, label]) => {
-            const list = rows.filter((r) => r.kind === kind);
-            if (list.length === 0) return null;
-            return (
-              <div key={kind}>
-                <h4>{label} <small>{list.length}</small></h4>
-                <ul className="fixv-list">
-                  {list.map((r) => (
-                    <li key={r.id} className={`${r.on ? "picked" : ""}${fresh.has(r.id) ? " fresh" : ""}`}>
-                      <input className="pick" type="checkbox" checked={r.on} disabled={busy} onChange={(e) => patch(r.id, { on: e.target.checked })} aria-label={`Change ${r.from}`} />
-                      <div className="fixv-names">
-                        <small className="muted">{r.from}{r.kind !== "album" && r.ids.length > 1 ? ` · ${r.ids.length} songs` : ""}{r.kind === "album" ? ` · ${r.ids.length} songs` : ""}</small>
-                        <input type="text" value={r.to} disabled={busy} onChange={(e) => patch(r.id, { to: e.target.value })} aria-label={`New name for ${r.from}`} />
-                      </div>
-                      <small className="fixv-reason">{REASON[r.reason]}</small>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </>
+        <p className="status">
+          <strong>{rows.length} change{rows.length === 1 ? "" : "s"} ready to review</strong>{" "}
+          <button className="primary" onClick={() => flipTo("review")} disabled={busy}>Review changes →</button>
+        </p>
       )}
       {asks.length > 0 && (
         <div className="fixv-asks">

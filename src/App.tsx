@@ -700,6 +700,7 @@ function Playlists({ lib, uid }: { lib: ReturnType<typeof useLibrary>; uid: stri
 /** Owner tools for the shared library: where songs come from (YouTube, the NAS inbox) and keeping their names tidy. */
 function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void>; tracks: Track[] }) {
   const [fixOpen, setFixOpen] = useState(false);
+  const [fixSeen, setFixSeen] = useState(false);
   const down = home !== null && !home.ok;
   /** Reads the whole NAS library into the app. Reports progress in the status line; resolves to a summary, or null if it failed. */
   const syncNas = async (): Promise<string | null> => {
@@ -725,19 +726,24 @@ function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promi
   };
   return (
     <>
-      <h2>Library tools</h2>
-      <p className="muted">Everything here updates the shared library for the whole family. New songs show up in the Library by themselves when a job finishes.</p>
-      <Organize syncNas={syncNas} home={home} recheck={recheck} />
-      <section className="tool">
-        <h3>Fix Vietnamese names</h3>
-        <p className="muted">Finds Vietnamese titles, albums and artists with missing accents or wrong capitals. You pick which names to ask the AI about, and review every fix before it is saved.</p>
-        <p>
-          <button onClick={() => setFixOpen((o) => !o)} disabled={down} title={down ? home.error : undefined}>
-            {fixOpen ? "Hide the name fixer" : "Review names…"}
-          </button>
-        </p>
-        {fixOpen && <FixVietnamese tracks={tracks} refresh={refresh} />}
-      </section>
+      <div hidden={fixOpen}>
+        <h2>Library tools</h2>
+        <p className="muted">Everything here updates the shared library for the whole family. New songs show up in the Library by themselves when a job finishes.</p>
+        <Organize syncNas={syncNas} home={home} recheck={recheck} />
+        <section className="tool">
+          <h3>Fix Vietnamese names</h3>
+          <p className="muted">Finds Vietnamese titles, albums and artists with missing accents or wrong capitals. You pick which names to ask the AI about, and review every fix before it is saved.</p>
+          <p>
+            <button onClick={() => { setFixSeen(true); setFixOpen(true); window.scrollTo(0, 0); }} disabled={down} title={down ? home.error : undefined}>Open the name fixer…</button>
+          </p>
+        </section>
+      </div>
+      {/* Its own page; kept mounted once opened so the scan and your edits survive going back. */}
+      {fixSeen && (
+        <div hidden={!fixOpen}>
+          <FixVietnamese tracks={tracks} refresh={refresh} onBack={() => { setFixOpen(false); window.scrollTo(0, 0); }} />
+        </div>
+      )}
     </>
   );
 }
