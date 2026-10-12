@@ -43,8 +43,11 @@ export interface TrackEdit { title?: string; artist?: string; album?: string; tr
  * stored spelling when it is the same text as `name`, so a rename or merge lands on the existing entry, else `name`.
  */
 async function canonicalName(db: D1Database, familyId: string, col: "artist" | "album", name: string): Promise<string> {
-  const rows = await db.prepare(`SELECT DISTINCT ${col} AS n FROM tracks WHERE family_id = ? AND deleted = 0 AND ${col} != ''`)
-    .bind(familyId).all<{ n: string }>();
+  // Only the plain and the decomposed spelling are looked up (through the name index), not every name in the library.
+  const decomposed = name.normalize("NFD");
+  if (decomposed === name) return name;
+  const rows = await db.prepare(`SELECT ${col} AS n FROM tracks WHERE family_id = ? AND deleted = 0 AND ${col} IN (?, ?) LIMIT 2`)
+    .bind(familyId, name, decomposed).all<{ n: string }>();
   const names = rows.results.map((r) => r.n);
   return names.includes(name) ? name : (names.find((n) => n.normalize("NFC") === name) ?? name);
 }

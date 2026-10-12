@@ -853,10 +853,12 @@ async function refreshRuns() {
 
 let tracking = false;
 let lastSyncAt = 0;
+/** A sync reads the whole library from the database, so while jobs keep finishing it runs this often at most. */
+const SYNC_EVERY_MS = 5 * 60_000;
 
 /**
  * Follows the open Beets runs until none is left (any number of YouTube songs, and one import or enrich), and scans
- * Navidrome and syncs the library after runs finish: at once when everything is done, at most once a minute while
+ * Navidrome and syncs the library after runs finish: at once when everything is done, at most once every five minutes while
  * more keep coming. It lives outside the component so it keeps going when you leave the Library tools tab, and the tab picks
  * it up again when you come back. `first` are runs the caller has just started, so one that ends before the first
  * look is still noticed.
@@ -884,7 +886,7 @@ async function track(syncNas: () => Promise<string | null>, first: string[] = []
       const main = open.find((r) => r.kind !== "youtube") ?? null;
       // What a running job is doing is shown in its own card; the top line only carries scan, sync, done and failure messages.
       setOrganize({ runs, active: main, busy: main !== null, msg: open.length > 0 ? "" : organizeState.msg });
-      if (pendingSync && (open.length === 0 || Date.now() - lastSyncAt > 60_000)) {
+      if (pendingSync && (open.length === 0 || Date.now() - lastSyncAt > SYNC_EVERY_MS)) {
         pendingSync = false;
         setOrganize({ busy: true, msg: "Scanning Navidrome…" });
         await api.scanNas();
