@@ -16,7 +16,7 @@ interface Fix {
   on: boolean;
 }
 
-interface Ask { id: string; kind: Kind; from: string; ids: string[]; artist?: string; album?: string }
+interface Ask { id: string; kind: Kind; from: string; ids: string[]; artist?: string; album?: string; /** Set when the AI was asked and left it as it was. */ note?: string }
 
 const KINDS: [Kind, string][] = [["album", "Albums"], ["artist", "Artists"], ["title", "Titles"]];
 const KIND_LABEL: Record<Kind, string> = { album: "Album", artist: "Artist", title: "Song" };
@@ -72,6 +72,7 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [shown, setShown] = useState(100);
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
 
   const patch = (id: string, p: Partial<Fix>) => setRows((rs) => (rs ?? []).map((r) => (r.id === id ? { ...r, ...p } : r)));
 
@@ -104,13 +105,14 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
     );
   };
 
-  /** Asks the AI about the given names, in batches, and adds the valid suggestions as rows. */
+  /** Asks the AI about the given names, in batches, and adds the valid suggestions as rows to review. */
   const askAi = async (todo: Ask[]) => {
     stop.current = false;
     setBusy(true);
-    let found = 0;
-    let done = 0;
-    const asked = new Set<string>();
+    setFresh(new Set());
+    const fixed: Fix[] = [];
+    const unchanged = new Set<string>();
+    const answered = new Set<string>();
     try {
       for (let i = 0; i < todo.length && !stop.current; i += 25) {
         const batch = todo.slice(i, i + 25);
@@ -119,24 +121,34 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
         const answers = new Map(results.map((r) => [r.key, r.text]));
         const added: Fix[] = [];
         for (const a of batch) {
-          asked.add(a.id);
+          answered.add(a.id);
           const to = answers.get(a.id);
           // Only a real Vietnamese answer counts: capitalising an English name is not a fix.
           if (to && hasVietnamese(to)) added.push({ id: a.id, kind: a.kind, from: a.from, to, ids: a.ids, reason: "accents", on: true });
+          else unchanged.add(a.id);
         }
-        found += added.length;
-        done += batch.length;
+        fixed.push(...added);
         setRows((rs) => [...(rs ?? []).filter((r) => !added.some((x) => x.id === r.id)), ...added]);
       }
+      const names = (ids: Iterable<string>) => [...ids].map((id) => todo.find((a) => a.id === id)!.from);
+      const list = (xs: string[]) => xs.slice(0, 3).map((x) => `"${x}"`).join(", ") + (xs.length > 3 ? ` and ${xs.length - 3} more` : "");
+      const noChange = names(unchanged);
       setMsg(
-        `${stop.current ? `Stopped after ${done} of ${todo.length} names. ` : ""}The AI added accents to ${found} of ${done} name${done === 1 ? "" : "s"}` +
-          `${found ? ". Untick any that are wrong, then apply." : ": the others are not Vietnamese or it was not sure."}`,
+        (stop.current ? `Stopped after ${answered.size} of ${todo.length} names. ` : "") +
+          (fixed.length
+            ? `The AI suggested ${fixed.length} change${fixed.length === 1 ? "" : "s"}: ${list(fixed.map((f) => `${f.from} → ${f.to}`))}. Review them in the list below, untick or edit any that are wrong, then apply.`
+            : "The AI did not suggest any change.") +
+          (noChange.length ? ` Left as they are: ${list(noChange)} (not Vietnamese, or the AI was not sure).` : ""),
       );
+      // The suggestions are at the top of the review list: show them.
+      setFresh(new Set(fixed.map((f) => f.id)));
+      if (fixed.length) requestAnimationFrame(() => document.querySelector(".fixv-list li.fresh")?.scrollIntoView({ block: "center", behavior: "smooth" }));
     } catch (e) {
-      setMsg(`${e instanceof Error ? e.message : "The AI request failed"} (${found} fixes found before that).`);
+      setMsg(`${e instanceof Error ? e.message : "The AI request failed"} (${fixed.length} suggestions found before that).`);
     } finally {
-      // Asked names leave the list, whether or not the AI changed them, so they are not asked twice.
-      setAsks((as) => as.filter((a) => !asked.has(a.id)));
+      // A name with a suggestion moves to the review list; one the AI left alone stays here, marked, so nothing vanishes.
+      const moved = new Set(fixed.map((f) => f.id));
+      setAsks((as) => as.filter((a) => !moved.has(a.id)).map((a) => (unchanged.has(a.id) ? { ...a, note: "The AI found nothing to change" } : a)));
       setChosen(new Set());
       setBusy(false);
     }
@@ -212,6 +224,37 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
         {busy && <button onClick={() => { stop.current = true; }}>Stop</button>}
       </p>
       {msg && <p className={/failed|could not|error/i.test(msg) ? "error" : "muted"}>{busy && <span className="spinner" />}{msg}</p>}
+      {rows !== null && rows.length > 0 && (
+        <>
+          <p className="fixv-bar">
+            <strong>{picked.length} selected</strong>
+            <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: true })))}>Select all</button>
+            <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: false })))}>Select none</button>
+            <button className="primary" onClick={() => void apply()} disabled={busy || picked.length === 0}>Apply {picked.length} changes</button>
+          </p>
+          {KINDS.map(([kind, label]) => {
+            const list = rows.filter((r) => r.kind === kind);
+            if (list.length === 0) return null;
+            return (
+              <div key={kind}>
+                <h4>{label} <small>{list.length}</small></h4>
+                <ul className="fixv-list">
+                  {list.map((r) => (
+                    <li key={r.id} className={`${r.on ? "picked" : ""}${fresh.has(r.id) ? " fresh" : ""}`}>
+                      <input className="pick" type="checkbox" checked={r.on} disabled={busy} onChange={(e) => patch(r.id, { on: e.target.checked })} aria-label={`Change ${r.from}`} />
+                      <div className="fixv-names">
+                        <small className="muted">{r.from}{r.kind !== "album" && r.ids.length > 1 ? ` · ${r.ids.length} songs` : ""}{r.kind === "album" ? ` · ${r.ids.length} songs` : ""}</small>
+                        <input type="text" value={r.to} disabled={busy} onChange={(e) => patch(r.id, { to: e.target.value })} aria-label={`New name for ${r.from}`} />
+                      </div>
+                      <small className="fixv-reason">{REASON[r.reason]}</small>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </>
+      )}
       {asks.length > 0 && (
         <div className="fixv-asks">
           <h4>May be missing accents <small>{asks.length}</small></h4>
@@ -240,7 +283,7 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
                 />
                 <div className="fixv-names">
                   <strong>{a.from}</strong>
-                  <small className="muted">{[KIND_LABEL[a.kind], a.kind !== "artist" ? a.artist : "", a.ids.length > 1 ? `${a.ids.length} songs` : ""].filter(Boolean).join(" · ")}</small>
+                  <small className="muted">{[KIND_LABEL[a.kind], a.kind !== "artist" ? a.artist : "", a.ids.length > 1 ? `${a.ids.length} songs` : "", a.note ?? ""].filter(Boolean).join(" · ")}</small>
                 </div>
               </li>
             ))}
@@ -248,37 +291,6 @@ export function FixVietnamese({ tracks, refresh }: { tracks: Track[]; refresh: (
           {matching.length > shown && <p><button className="link" onClick={() => setShown((n) => n + 100)}>Show {Math.min(100, matching.length - shown)} more of {matching.length - shown}</button></p>}
           {matching.length === 0 && <p className="muted">No name matches the filter.</p>}
         </div>
-      )}
-      {rows !== null && rows.length > 0 && (
-        <>
-          <p className="fixv-bar">
-            <strong>{picked.length} selected</strong>
-            <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: true })))}>Select all</button>
-            <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: false })))}>Select none</button>
-            <button className="primary" onClick={() => void apply()} disabled={busy || picked.length === 0}>Apply {picked.length} changes</button>
-          </p>
-          {KINDS.map(([kind, label]) => {
-            const list = rows.filter((r) => r.kind === kind);
-            if (list.length === 0) return null;
-            return (
-              <div key={kind}>
-                <h4>{label} <small>{list.length}</small></h4>
-                <ul className="fixv-list">
-                  {list.map((r) => (
-                    <li key={r.id} className={r.on ? "picked" : ""}>
-                      <input className="pick" type="checkbox" checked={r.on} disabled={busy} onChange={(e) => patch(r.id, { on: e.target.checked })} aria-label={`Change ${r.from}`} />
-                      <div className="fixv-names">
-                        <small className="muted">{r.from}{r.kind !== "album" && r.ids.length > 1 ? ` · ${r.ids.length} songs` : ""}{r.kind === "album" ? ` · ${r.ids.length} songs` : ""}</small>
-                        <input type="text" value={r.to} disabled={busy} onChange={(e) => patch(r.id, { to: e.target.value })} aria-label={`New name for ${r.from}`} />
-                      </div>
-                      <small className="fixv-reason">{REASON[r.reason]}</small>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </>
       )}
     </section>
   );
