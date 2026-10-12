@@ -15,6 +15,8 @@ export interface EditField {
   checkbox?: boolean;
   /** Shows "Add accents": asks the AI to restore Vietnamese accents on this one name. */
   accents?: boolean;
+  /** What the name is, sent to the AI as a hint (a field keyed title, artist or album implies it). */
+  kind?: "title" | "album" | "artist";
 }
 
 /** Lowercase, no diacritics (đ -> d), words separated by single spaces: "Hương  Cần" and "huong can" compare equal. */
@@ -77,12 +79,12 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
   const unchanged = fields.every((f) => values[f.key]!.trim() === f.value.trim());
 
   /** One name to the AI. The artist and album fields (if the dialog has them) are sent as context. */
-  const addAccents = async (key: string) => {
+  const addAccents = async (key: string, kind: EditField["kind"]) => {
     setAsking(key);
     setAiNote("");
     setError("");
     try {
-      const { results } = await api.restoreVietnamese([{ key, text: values[key]!.trim(), artist: values.artist?.trim() || undefined, album: values.album?.trim() || undefined }]);
+      const { results } = await api.restoreVietnamese([{ key, text: values[key]!.trim(), kind, artist: values.artist?.trim() || undefined, album: values.album?.trim() || undefined }]);
       asked.current[key] = values[key]!.trim();
       const text = results[0]?.text;
       if (text && hasVietnamese(text)) setValues((v) => ({ ...v, [key]: text }));
@@ -124,7 +126,7 @@ export function EditDialog({ title, fields, hint, onSave, onClose }: Props) {
             <span>
               {f.label}
               {f.accents && values[f.key]!.trim() !== "" && !hasVietnamese(values[f.key]!) && (
-                <> · <button type="button" className="link" disabled={asking !== null || busy} onClick={() => void addAccents(f.key)}>{asking === f.key ? "Asking the AI…" : "Add accents with AI"}</button></>
+                <> · <button type="button" className="link" disabled={asking !== null || busy} onClick={() => void addAccents(f.key, f.kind ?? (f.key === "title" || f.key === "artist" || f.key === "album" ? f.key : undefined))}>{asking === f.key ? "Asking the AI…" : "Add accents with AI"}</button></>
               )}
             </span>
             <input

@@ -398,7 +398,7 @@ function Library({ tracks, playlists, uid, refresh, home, isOwner, openTools }: 
       <EditDialog
         title={kind === "album" ? "Rename or merge album" : "Rename or merge artist"}
         onClose={close}
-        fields={[{ key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, accents: isOwner, options: groups.filter((g) => g.name !== current).map((g) => g.name) }]}
+        fields={[{ key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, accents: isOwner, kind, options: groups.filter((g) => g.name !== current).map((g) => g.name) }]}
         hint={(v) => {
           const to = nfc(v.name ?? "");
           const target = groups.find((g) => g.name !== current && nfc(g.name) === to);

@@ -77,7 +77,7 @@ export const api = {
   editTitles: (edits: { id: string; title: string }[]) =>
     call<{ updated: number; skipped: number; ok: boolean; filesUpdated: boolean; warning: string }>("POST", "/api/library/titles", { edits }),
   /** AI: accents for up to 25 names written without them. Only answers that add accents and nothing else come back. */
-  restoreVietnamese: (items: { key: string; text: string; artist?: string; album?: string }[]) =>
+  restoreVietnamese: (items: { key: string; text: string; kind?: "title" | "album" | "artist"; artist?: string; album?: string }[]) =>
     call<{ results: { key: string; text: string }[] }>("POST", "/api/vietnamese/restore", { items }),
   /** What the owner corrected the AI to before (family-wide); from = to means "leave this name alone". */
   vietnameseCorrections: () => call<{ corrections: { from: string; to: string }[] }>("GET", "/api/vietnamese/corrections"),

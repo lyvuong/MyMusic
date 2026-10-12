@@ -8,7 +8,11 @@ import { fold, onlyAddsMarks } from "../shared/vietnamese";
 
 const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
-export interface AccentItem { key: string; text: string; artist?: string; album?: string }
+export type AccentKind = "title" | "album" | "artist";
+
+export interface AccentItem { key: string; text: string; kind?: AccentKind; artist?: string; album?: string }
+
+const KIND_HINT: Record<AccentKind, string> = { title: "Vietnamese song title", album: "Vietnamese album title", artist: "Vietnamese artist name" };
 
 export class VietnameseError extends Error {
   constructor(public status: 501 | 502, message: string) {
@@ -18,7 +22,7 @@ export class VietnameseError extends Error {
 
 const SYSTEM =
   "You restore Vietnamese diacritics. Each numbered line is a song title, an album name or an artist name that was written " +
-  "without accents, followed by the artist and album as context. Most of these names are Vietnamese songs, albums and " +
+  "without accents, followed by the artist and album as context. Each line says what the text is, such as a Vietnamese song title, a Vietnamese album title or a Vietnamese artist name; trust that hint. Most of these names are Vietnamese songs, albums and " +
   "singers (love songs, folk and bolero, Trinh Cong Son, Khanh Ly and so on), so restore the accents whenever the words " +
   "can be Vietnamese. Return the same text with the correct Vietnamese diacritics (including đ) and capitalise every " +
   "word like a title. Examples: \"Tinh Ca\" -> \"Tình Ca\"; \"Con Yeu Em Mai\" -> \"Còn Yêu Em Mãi\"; \"Nho Mot Nguoi\" -> " +
@@ -82,7 +86,7 @@ export async function restoreAccents(env: Env, items: AccentItem[], learned: Cor
     .filter((c) => c.from !== c.to && fold(c.from).split(" ").some((w) => words.has(w)))
     .slice(0, 25)
     .map((c) => `${one(c.from)} -> ${one(c.to)}`);
-  const lines = items.map((it, i) => `${i + 1}|${one(it.text)}|artist: ${one(it.artist) || "-"}|album: ${one(it.album) || "-"}`).join("\n");
+  const lines = items.map((it, i) => `${i + 1}|${one(it.text)}|type: ${it.kind ? KIND_HINT[it.kind] : "-"}|artist: ${one(it.artist) || "-"}|album: ${one(it.album) || "-"}`).join("\n");
   let out: unknown;
   try {
     const res = (await env.AI.run(MODEL, {
@@ -92,7 +96,7 @@ export async function restoreAccents(env: Env, items: AccentItem[], learned: Cor
           role: "user",
           content:
             (examples.length ? `Corrections the owner made before (follow them for the same words and names):\n${examples.join("\n")}\n\n` : "") +
-            `Lines (number|text|artist|album):\n${lines}\n\nReturn {"results":[{"n":<line number>,"text":<text with accents>}]} for every line.`,
+            `Lines (number|text|type|artist|album):\n${lines}\n\nReturn {"results":[{"n":<line number>,"text":<text with accents>}]} for every line.`,
         },
       ],
       max_tokens: 1500,

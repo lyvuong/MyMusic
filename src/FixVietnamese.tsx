@@ -119,7 +119,7 @@ export function FixVietnamese({ tracks, refresh, onBack }: { tracks: Track[]; re
       for (let i = 0; i < todo.length && !stop.current; i += 25) {
         const batch = todo.slice(i, i + 25);
         setMsg(`Asking the AI… ${i} of ${todo.length} names`);
-        const { results } = await api.restoreVietnamese(batch.map((a) => ({ key: a.id, text: a.from, artist: a.artist, album: a.album })));
+        const { results } = await api.restoreVietnamese(batch.map((a) => ({ key: a.id, text: a.from, kind: a.kind, artist: a.artist, album: a.album })));
         const answers = new Map(results.map((r) => [r.key, r.text]));
         const added: Fix[] = [];
         for (const a of batch) {

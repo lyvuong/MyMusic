@@ -317,7 +317,7 @@ app.post("/api/vietnamese/restore", async (c) => {
   for (const it of raw) {
     const text = typeof it?.text === "string" ? it.text.trim() : "";
     if (typeof it?.key !== "string" || it.key.length > 80 || !text || text.length > 200) return c.json({ error: "bad name" }, 400);
-    items.push({ key: it.key, text, artist: typeof it.artist === "string" ? it.artist.slice(0, 200) : undefined, album: typeof it.album === "string" ? it.album.slice(0, 200) : undefined });
+    items.push({ key: it.key, text, kind: it.kind === "title" || it.kind === "album" || it.kind === "artist" ? it.kind : undefined, artist: typeof it.artist === "string" ? it.artist.slice(0, 200) : undefined, album: typeof it.album === "string" ? it.album.slice(0, 200) : undefined });
   }
   try {
     const learned = await loadCorrections(c.env.DB, c.get("family").familyId);
