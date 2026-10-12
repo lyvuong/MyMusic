@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { changedSongs, goneSongIds, type NasSong, type StoredSong } from "./nas";
 
 const song = (key: string, over: Partial<NasSong> = {}): NasSong => ({
-  key, title: `t-${key}`, artist: "a", album: "b", duration: 200, trackNo: 1, artKey: `nas:${key}`, size: 1000, mime: "audio/mpeg", ...over,
+  key, title: `t-${key}`, artist: "a", album: "b", duration: 200, trackNo: 1, artKey: `nas:${key}`, size: 1000, mime: "audio/mpeg", genre: "Pop", ...over,
 });
 
 const stored = (s: NasSong, over: Partial<StoredSong> = {}): StoredSong => ({
   title: s.title, artist: s.artist, album: s.album, duration: s.duration, track_no: s.trackNo,
-  art_key: s.artKey, size: s.size, mime: s.mime, edited: 0, deleted: 0, ...over,
+  art_key: s.artKey, size: s.size, mime: s.mime, edited: 0, deleted: 0, genre: s.genre, ...over,
 });
 
 const library = (songs: NasSong[], over: Partial<StoredSong> = {}) => new Map(songs.map((s) => [s.key, stored(s, over)]));

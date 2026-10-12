@@ -14,6 +14,8 @@ export interface Track {
   deleted: boolean;
   /** Made by AI (shown with a badge). */
   ai: boolean;
+  /** From the file's tags (NAS songs); empty when unknown. */
+  genre: string;
 }
 
 export interface Playlist {
@@ -94,4 +96,33 @@ export interface ServerStatus {
   waiting?: number;
   /** The server imports what lands in the inbox by itself. */
   autoImport?: boolean;
+}
+
+/** One AI mix of the day, as the home page shows it (the songs are in HomeData.tracks). */
+export interface MixInfo {
+  daypart: "morning" | "afternoon" | "evening" | "night";
+  title: string;
+  intro: string;
+  generatedAt: number;
+  trackIds: string[];
+}
+
+/** Everything the start page needs, in one small request: the library itself is never sent. */
+export interface HomeData {
+  mixes: MixInfo[];
+  /** The newest songs, newest first (the page groups them into albums). */
+  recent: Track[];
+  lists: { popular: string[]; top: string[]; rediscover: string[] };
+  /** The songs that mixes and lists refer to. */
+  tracks: Track[];
+  genres: { name: string; count: number }[];
+  songs: number;
+  /** Uploaded songs whose cover was never looked up. */
+  missingCovers: number;
+}
+
+/** A page of songs from search or browsing; `next` is what to send as `cursor` for the following page. */
+export interface BrowsePage {
+  tracks: Track[];
+  next: number | null;
 }

@@ -1,23 +1,26 @@
 import type { Playlist, Track } from "../shared/types";
 
-interface TrackRow {
+export interface TrackRow {
   id: string; source: "r2" | "nas"; title: string; artist: string; album: string; duration: number;
   track_no: number; art_key: string | null; size: number; etag: string; mime: string; updated_at: number; deleted: number; ai: number;
+  genre: string;
 }
 
 export const toTrack = (r: TrackRow): Track => ({
   id: r.id, source: r.source, title: r.title, artist: r.artist, album: r.album, duration: r.duration,
   trackNo: r.track_no, hasArt: !!r.art_key, size: r.size, etag: r.etag, mime: r.mime,
-  updatedAt: r.updated_at, deleted: !!r.deleted, ai: !!r.ai,
+  updatedAt: r.updated_at, deleted: !!r.deleted, ai: !!r.ai, genre: r.genre ?? "",
 });
 
 /**
  * Tracks and playlists in the family changed after `since` (ms epoch); deleted rows come back as
  * tombstones. Playlists are the caller's own plus ones other members marked shared.
  */
-export async function delta(db: D1Database, familyId: string, uid: string, since: number) {
-  const tracks = await db.prepare("SELECT * FROM tracks WHERE family_id = ? AND updated_at > ? ORDER BY updated_at")
-    .bind(familyId, since).all<TrackRow>();
+export async function delta(db: D1Database, familyId: string, uid: string, since: number, withTracks = true) {
+  // `since` = 0 would send the whole library; a page that only needs playlists and the clock asks without tracks.
+  const tracks = withTracks
+    ? await db.prepare("SELECT * FROM tracks WHERE family_id = ? AND updated_at > ? ORDER BY updated_at").bind(familyId, since).all<TrackRow>()
+    : { results: [] as TrackRow[] };
   const pls = await db
     .prepare("SELECT id, name, owner_uid, shared, updated_at, deleted FROM playlists WHERE family_id = ? AND updated_at > ? AND (owner_uid = ? OR shared = 1)")
     .bind(familyId, since, uid)

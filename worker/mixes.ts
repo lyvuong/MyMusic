@@ -34,12 +34,15 @@ function parseIds(s: string): string[] {
 }
 
 /** Builds the four mixes for one member. A failed day-part keeps yesterday's mix. Returns how many were saved. */
-export async function buildMixesFor(env: Env, familyId: string, uid: string, force = false): Promise<number> {
+export async function buildMixesFor(env: Env, familyId: string, uid: string, force = false, lastSeen = Infinity): Promise<number> {
   const existing = new Map((await getMixes(env.DB, uid)).map((m) => [m.daypart, m.generatedAt]));
   let saved = 0;
   let rows: Awaited<ReturnType<typeof loadRows>> | undefined; // one read of the library for all four day-parts
   for (const daypart of DAYPARTS) {
-    if (!force && Date.now() - (existing.get(daypart) ?? 0) < FRESH_MS) continue;
+    const built = existing.get(daypart) ?? 0;
+    if (!force && Date.now() - built < FRESH_MS) continue;
+    // Nobody opened the app since this mix was made, so it is still the one they would see: keep it.
+    if (!force && built > 0 && lastSeen <= built) continue;
     try {
       rows ??= await loadRows(env, familyId, uid);
       const s = await suggest(env, familyId, uid, DAYPART_HINT[daypart], rows);
@@ -65,10 +68,10 @@ export async function buildMixesFor(env: Env, familyId: string, uid: string, for
 export async function buildMixSlice(env: Env, offset: number, limit: number): Promise<{ members: number; mixes: number }> {
   if (!env.AI) return { members: 0, mixes: 0 };
   const take = Math.min(Math.max(Math.floor(limit) || 1, 1), MAX_MEMBERS_PER_CALL);
-  const members = await env.DB.prepare("SELECT uid, family_id FROM members ORDER BY uid LIMIT ? OFFSET ?")
-    .bind(take, Math.max(Math.floor(offset) || 0, 0)).all<{ uid: string; family_id: string }>();
+  const members = await env.DB.prepare("SELECT uid, family_id, last_seen_at FROM members ORDER BY uid LIMIT ? OFFSET ?")
+    .bind(take, Math.max(Math.floor(offset) || 0, 0)).all<{ uid: string; family_id: string; last_seen_at: number }>();
   let mixes = 0;
-  for (const m of members.results) mixes += await buildMixesFor(env, m.family_id, m.uid);
+  for (const m of members.results) mixes += await buildMixesFor(env, m.family_id, m.uid, false, m.last_seen_at);
   return { members: members.results.length, mixes };
 }
 

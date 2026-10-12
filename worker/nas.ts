@@ -1,3 +1,4 @@
+import { clearLibraryCache } from "./browse";
 /**
  * Navidrome / Subsonic-API music server (reached through a Cloudflare Tunnel). Tracks synced from it have
  * source = 'nas', source_key = the Subsonic song id and art_key = 'nas:<coverArt id>'; audio and covers are
@@ -27,7 +28,7 @@ export async function nasFetch(env: Env, endpoint: string, params: Record<string
 
 interface Song {
   id: string; title?: string; artist?: string; album?: string; duration?: number; track?: number;
-  size?: number; contentType?: string; coverArt?: string;
+  size?: number; contentType?: string; coverArt?: string; genre?: string;
 }
 
 /** D1 allows 100 bound parameters per query; leave room for the family id and a timestamp. */
@@ -36,18 +37,19 @@ const IN_CHUNK = 90;
 /** A NAS song reduced to the values the library keeps. */
 export interface NasSong {
   key: string; title: string; artist: string; album: string; duration: number; trackNo: number;
-  artKey: string | null; size: number; mime: string;
+  artKey: string | null; size: number; mime: string; genre: string;
 }
 
 /** What D1 already holds for a NAS song. */
 export interface StoredSong {
   title: string; artist: string; album: string; duration: number; track_no: number;
-  art_key: string | null; size: number; mime: string; edited: number; deleted: number;
+  art_key: string | null; size: number; mime: string; edited: number; deleted: number; genre: string;
 }
 
 const toNasSong = (s: Song): NasSong => ({
   key: s.id, title: s.title || "Unknown", artist: s.artist ?? "", album: s.album ?? "", duration: s.duration ?? 0, trackNo: s.track ?? 0,
   artKey: s.coverArt ? `nas:${s.coverArt}` : null, size: s.size ?? 0, mime: s.contentType ?? "audio/mpeg",
+  genre: (s.genre ?? "").slice(0, 100),
 });
 
 /**
@@ -59,7 +61,7 @@ export function changedSongs(stored: Map<string, StoredSong>, incoming: NasSong[
   return incoming.filter((s) => {
     const o = stored.get(s.key);
     if (!o || o.deleted === 1) return true;
-    if (o.duration !== s.duration || o.art_key !== s.artKey || o.size !== s.size || o.mime !== s.mime) return true;
+    if (o.duration !== s.duration || o.art_key !== s.artKey || o.size !== s.size || o.mime !== s.mime || o.genre !== s.genre) return true;
     return o.edited === 0 && (o.title !== s.title || o.artist !== s.artist || o.album !== s.album || o.track_no !== s.trackNo);
   });
 }
@@ -80,7 +82,7 @@ async function storedFor(env: Env, familyId: string, keys: string[]): Promise<Ma
   const map = new Map<string, StoredSong>();
   for (const part of chunks(keys, IN_CHUNK)) {
     const rows = await env.DB.prepare(
-      "SELECT source_key, title, artist, album, duration, track_no, art_key, size, mime, edited, deleted FROM tracks " +
+      "SELECT source_key, title, artist, album, duration, track_no, art_key, size, mime, edited, deleted, genre FROM tracks " +
         `WHERE family_id = ? AND source = 'nas' AND source_key IN (${part.map(() => "?").join(",")})`,
     ).bind(familyId, ...part).all<StoredSong & { source_key: string }>();
     for (const r of rows.results) map.set(r.source_key, r);
@@ -103,25 +105,26 @@ export async function syncPage(env: Env, familyId: string, offset: number) {
 
   const now = Date.now();
   const upsert = env.DB.prepare(
-    "INSERT INTO tracks (id, family_id, source, source_key, title, artist, album, duration, track_no, art_key, size, etag, mime, updated_at, sync_seen) " +
-      "VALUES (?, ?, 'nas', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+    "INSERT INTO tracks (id, family_id, source, source_key, title, artist, album, duration, track_no, art_key, size, etag, mime, updated_at, sync_seen, genre) " +
+      "VALUES (?, ?, 'nas', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(family_id, source, source_key) DO UPDATE SET " +
       // Songs edited in the web app (edited = 1) keep their title, artist, album and track number.
       "updated_at = CASE WHEN tracks.deleted = 1 " +
       "OR (tracks.edited = 0 AND (tracks.title IS NOT excluded.title OR tracks.artist IS NOT excluded.artist OR tracks.album IS NOT excluded.album OR tracks.track_no IS NOT excluded.track_no)) " +
       "OR tracks.duration IS NOT excluded.duration OR tracks.art_key IS NOT excluded.art_key OR tracks.size IS NOT excluded.size " +
+      "OR tracks.genre IS NOT excluded.genre " +
       "THEN excluded.updated_at ELSE tracks.updated_at END, " +
       "title = CASE WHEN tracks.edited = 1 THEN tracks.title ELSE excluded.title END, " +
       "artist = CASE WHEN tracks.edited = 1 THEN tracks.artist ELSE excluded.artist END, " +
       "album = CASE WHEN tracks.edited = 1 THEN tracks.album ELSE excluded.album END, " +
       "duration = excluded.duration, " +
       "track_no = CASE WHEN tracks.edited = 1 THEN tracks.track_no ELSE excluded.track_no END, " +
-      "art_key = excluded.art_key, size = excluded.size, etag = excluded.etag, mime = excluded.mime, deleted = 0, sync_seen = excluded.sync_seen",
+      "art_key = excluded.art_key, size = excluded.size, etag = excluded.etag, mime = excluded.mime, genre = excluded.genre, deleted = 0, sync_seen = excluded.sync_seen",
   );
   const stmts = todo.map((s) =>
     upsert.bind(
       crypto.randomUUID(), familyId, s.key, s.title, s.artist, s.album, s.duration, s.trackNo,
-      s.artKey, s.size, `${s.key}:${s.size}`, s.mime, now, now,
+      s.artKey, s.size, `${s.key}:${s.size}`, s.mime, now, now, s.genre,
     ),
   );
   for (const part of chunks(stmts, 100)) await env.DB.batch(part);
@@ -166,6 +169,7 @@ export async function finishSync(env: Env, familyId: string, seen: string[]) {
       ).bind(familyId, now - 3 * 86400 * 1000),
     ]);
   }
+  await clearLibraryCache(env.DB, familyId);
   return { removed, skippedRemoval: suspicious ? gone.length : 0 };
 }
 

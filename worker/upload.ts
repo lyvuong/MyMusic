@@ -1,3 +1,4 @@
+import { clearLibraryCache } from "./browse";
 import { parseBuffer } from "music-metadata";
 import { findAlbumArt } from "./artwork";
 
@@ -41,5 +42,6 @@ export async function ingest(env: Env, familyId: string, file: File): Promise<{ 
     id, familyId, key, title, common?.artist ?? "", common?.album ?? "", meta?.format.duration ?? 0, common?.track.no ?? 0,
     artKey, buf.byteLength, id, mime, Date.now(), hash, tried,
   ).run();
+  await clearLibraryCache(env.DB, familyId);
   return { id, duplicate: false };
 }

@@ -12,6 +12,7 @@ import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatu
 import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { recordPlays, popular } from "./plays";
+import { browse, clearLibraryCache, groupTracks, homeData, nameSuggestions, touchMember, tracksByIds, PAGE_GROUPED, PAGE_SONGS } from "./browse";
 import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
@@ -73,7 +74,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/plays", "/api/popular", "/api/mixes", "/api/mixes/*", "/api/art-urls", "/api/cast/*", "/api/vietnamese/*"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/plays", "/api/popular", "/api/mixes", "/api/mixes/*", "/api/art-urls", "/api/cast/*", "/api/vietnamese/*", "/api/home", "/api/browse", "/api/group", "/api/names"]) {
   app.use(p, needFamily);
 }
 
@@ -128,7 +129,43 @@ app.delete("/api/account", async (c) => {
 
 app.get("/api/library", async (c) => {
   const since = Number(c.req.query("since") ?? 0) || 0;
-  return c.json(await delta(c.env.DB, c.get("family").familyId, c.get("user").uid, since));
+  await touchMember(c.env.DB, c.get("user").uid);
+  // ?tracks=0: playlists and the clock only. The web page finds songs through /api/browse instead of loading them all.
+  return c.json(await delta(c.env.DB, c.get("family").familyId, c.get("user").uid, since, c.req.query("tracks") !== "0"));
+});
+
+/** The start page: the caller's mixes, the newest songs, most played, loved and genres, without the library. */
+app.get("/api/home", async (c) => c.json(await homeData(c.env.DB, c.get("family").familyId, c.get("user").uid)));
+
+/** A page of songs: `q` searches (accents and word order ignored), `genre` narrows, no `q` lists the newest first. */
+app.get("/api/browse", async (c) => {
+  const q = c.req.query();
+  const grouped = q.view === "albums" || q.view === "artists";
+  return c.json(await browse(c.env.DB, c.get("family").familyId, {
+    q: (q.q ?? "").slice(0, 100), genre: q.genre, cursor: Number(q.cursor ?? 0) || 0, limit: grouped ? PAGE_GROUPED : PAGE_SONGS,
+  }));
+});
+
+/** Every song of one album or artist (`?kind=album|artist&name=`), for its page. */
+app.get("/api/group", async (c) => {
+  const kind = c.req.query("kind");
+  const name = c.req.query("name") ?? "";
+  if ((kind !== "album" && kind !== "artist") || !name) return c.json({ error: "bad request" }, 400);
+  return c.json({ tracks: await groupTracks(c.env.DB, c.get("family").familyId, kind, name) });
+});
+
+/** Existing artist or album names that match what is typed (`?kind=&q=`), for the edit dialogs. */
+app.get("/api/names", async (c) => {
+  const kind = c.req.query("kind");
+  if (kind !== "album" && kind !== "artist") return c.json({ error: "bad request" }, 400);
+  return c.json({ names: await nameSuggestions(c.env.DB, c.get("family").familyId, kind, (c.req.query("q") ?? "").slice(0, 100)) });
+});
+
+/** Songs by id (up to 100), for playlists and mixes that only hold ids. */
+app.post("/api/tracks/by-ids", async (c) => {
+  const b = await c.req.json<{ ids?: unknown }>().catch(() => null);
+  const ids = Array.isArray(b?.ids) ? (b!.ids as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 100) : [];
+  return c.json({ tracks: await tracksByIds(c.env.DB, c.get("family").familyId, ids) });
 });
 
 app.put("/api/playlists/:id", async (c) => {
@@ -157,7 +194,10 @@ app.post("/api/plays", async (c) => {
 app.get("/api/popular", async (c) => c.json({ tracks: await popular(c.env.DB, c.get("family").familyId) }));
 
 /** The caller's AI mixes (one per time of day), built overnight. Empty until the first night run. */
-app.get("/api/mixes", async (c) => c.json({ mixes: await getMixes(c.env.DB, c.get("user").uid) }));
+app.get("/api/mixes", async (c) => {
+  await touchMember(c.env.DB, c.get("user").uid);
+  return c.json({ mixes: await getMixes(c.env.DB, c.get("user").uid) });
+});
 
 /** Builds the caller's own mixes now instead of waiting for the night run (about half a minute). */
 app.post("/api/mixes/refresh", async (c) => {
@@ -416,6 +456,7 @@ app.delete("/api/tracks/:id", async (c) => {
   if (!row) return c.json({ error: "not found" }, 404);
   if (row.source === "r2") await c.env.MUSIC.delete(row.art_key ? [row.source_key, row.art_key] : [row.source_key]);
   await c.env.DB.prepare("UPDATE tracks SET deleted = 1, art_key = NULL, updated_at = ? WHERE id = ?").bind(Date.now(), c.req.param("id")).run();
+  await clearLibraryCache(c.env.DB, fam);
   return c.json({ ok: true });
 });
 

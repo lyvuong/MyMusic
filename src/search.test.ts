@@ -3,7 +3,7 @@ import type { Track } from "../shared/types";
 import { buildIndex, searchTracks } from "./search";
 
 const t = (id: string, title: string, artist: string, album = ""): Track => ({
-  id, source: "nas", title, artist, album, duration: 200, trackNo: 1, hasArt: false, size: 1, etag: id, mime: "audio/mpeg", updatedAt: 1, deleted: false, ai: false,
+  id, source: "nas", title, artist, album, duration: 200, trackNo: 1, hasArt: false, size: 1, etag: id, mime: "audio/mpeg", updatedAt: 1, deleted: false, ai: false, genre: "",
 });
 
 const lib = [
