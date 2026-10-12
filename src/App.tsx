@@ -882,17 +882,8 @@ async function track(syncNas: () => Promise<string | null>, first: string[] = []
         else failed = r.kind === "youtube" ? `Could not add ${r.label ?? "a song"}. See the log below.` : "Beets failed. See the log below.";
       }
       const main = open.find((r) => r.kind !== "youtube") ?? null;
-      const imp = open.find((r) => r.kind === "import");
-      const enr = open.find((r) => r.kind === "enrich");
-      const songs = open.filter((r) => r.kind === "youtube").length;
-      setOrganize({
-        runs, active: main, busy: main !== null,
-        msg: [
-          imp ? (imp.status === "requested" ? "Waiting for the server…" : "Beets is importing…") : "",
-          enr ? (enr.status === "requested" ? "Enrich is waiting for the server…" : "Beets is adding art and genres…") : "",
-          songs ? `${songs} YouTube song${songs > 1 ? "s" : ""} in progress…` : "",
-        ].filter(Boolean).join(" ") || organizeState.msg,
-      });
+      // What a running job is doing is shown in its own card; the top line only carries scan, sync, done and failure messages.
+      setOrganize({ runs, active: main, busy: main !== null, msg: open.length > 0 ? "" : organizeState.msg });
       if (pendingSync && (open.length === 0 || Date.now() - lastSyncAt > 60_000)) {
         pendingSync = false;
         setOrganize({ busy: true, msg: "Scanning Navidrome…" });
@@ -1049,7 +1040,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
           Home server unavailable: {home.error} <button className="link" onClick={() => void recheck()}>Check again</button>
         </p>
       )}
-      {(busy || msg) && (
+      {msg && (
         <p className="status" role="status">
           {busy && <span className="spinner" aria-hidden="true" />}
           {msg}
@@ -1155,10 +1146,16 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
           {home?.ok && (home.waiting ?? 0) > 0 ? ` ${home.waiting} file${home.waiting === 1 ? "" : "s"} waiting in the inbox now.` : ""}
         </p>
         <p><button disabled={scanning || imp !== null || down} onClick={() => void organize()}>Import inbox and update library</button></p>
-        {imp?.status === "running" && imp.inboxBefore !== null && imp.inboxNow !== null && imp.inboxBefore > 0 && (
-          <p>
-            <progress max={imp.inboxBefore} value={Math.max(0, imp.inboxBefore - imp.inboxNow)} />{" "}
-            <small className="muted">{Math.max(0, imp.inboxBefore - imp.inboxNow)} of {imp.inboxBefore} files imported</small>
+        {imp && (
+          <p className="job" role="status">
+            <span className="spinner" aria-hidden="true" />
+            {imp.status === "requested" ? "Waiting for the server…" : "Beets is importing…"}
+            {imp.status === "running" && imp.inboxBefore !== null && imp.inboxNow !== null && imp.inboxBefore > 0 && (
+              <>
+                {" "}<progress max={imp.inboxBefore} value={Math.max(0, imp.inboxBefore - imp.inboxNow)} />{" "}
+                <small className="muted">{Math.max(0, imp.inboxBefore - imp.inboxNow)} of {imp.inboxBefore} files imported</small>
+              </>
+            )}
           </p>
         )}
       </section>
@@ -1167,16 +1164,20 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
         <h3>Covers and genres</h3>
         <p className="muted">Fetches missing cover art and genres for songs already in the library. This also runs every night.</p>
         <p><button disabled={scanning || enr !== null || down} onClick={() => void enrich()}>Fill in covers and genres now</button></p>
-        {enr?.status === "running" && (() => {
+        {enr && (() => {
           // The server reports before = number of steps and now = steps still to do.
           const total = ENRICH_STEPS.length;
           const done = Math.min(total, Math.max(0, (enr.inboxBefore ?? total) - (enr.inboxNow ?? total)));
+          const running = enr.status === "running";
           return (
-            <p>
-              <progress max={total} value={done} />{" "}
-              <small className="muted">
-                {enr.inboxNow === null ? "Waiting for the server to start…" : `Step ${Math.min(total, done + 1)} of ${total}: ${ENRICH_STEPS[Math.min(total - 1, done)]}`}
-              </small>
+            <p className="job" role="status">
+              <span className="spinner" aria-hidden="true" />
+              {!running ? "Waiting for the server…" : enr.inboxNow === null ? "Starting…" : (
+                <>
+                  <progress max={total} value={done} />{" "}
+                  <small className="muted">Step {Math.min(total, done + 1)} of {total}: {ENRICH_STEPS[Math.min(total - 1, done)]}</small>
+                </>
+              )}
             </p>
           );
         })()}
