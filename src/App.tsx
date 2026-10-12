@@ -741,7 +741,7 @@ function LibraryTools({ refresh, home, recheck, tracks }: { refresh: () => Promi
       {/* Its own page; kept mounted once opened so the scan and your edits survive going back. */}
       {fixSeen && (
         <div hidden={!fixOpen}>
-          <FixVietnamese tracks={tracks} refresh={refresh} onBack={() => { setFixOpen(false); window.scrollTo(0, 0); }} />
+          <FixVietnamese tracks={tracks} refresh={refresh} home={home} onBack={() => { setFixOpen(false); window.scrollTo(0, 0); }} />
         </div>
       )}
     </>

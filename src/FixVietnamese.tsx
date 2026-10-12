@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { Track } from "../shared/types";
+import type { ServerStatus, Track } from "../shared/types";
 import { cleanVietnamese, fold, hasVietnamese, maybeNeedsAccents } from "../shared/vietnamese";
 import { api } from "./api";
 
@@ -61,7 +61,12 @@ function scan(tracks: Track[]): { fixes: Fix[]; asks: Ask[] } {
  * Owner tool: cleans Vietnamese names. Typed marks and capitals are fixed by rules; names without accents are listed
  * and the owner picks which ones to send to the AI. Nothing is changed until the rows are applied.
  */
-export function FixVietnamese({ tracks, refresh, onBack }: { tracks: Track[]; refresh: () => Promise<void>; onBack: () => void }) {
+/** An import holds the Beets library lock for its whole run, and file edits cannot start until it lets go. */
+const importing = (s: ServerStatus | null) => !!s && (s.jobs ? s.jobs.some((j) => j.kind === "import") : s.busy === "import");
+const IMPORT_MSG = "Could not apply yet: an import is running on the server, and names cannot be changed until it finishes. Your review is kept; press Apply again then.";
+const isBusyError = (e: unknown) => e instanceof Error && /library is busy|right now/i.test(e.message);
+
+export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track[]; refresh: () => Promise<void>; home: ServerStatus | null; onBack: () => void }) {
   const [rows, setRows] = useState<Fix[] | null>(null);
   const [asks, setAsks] = useState<Ask[]>([]);
   const [busy, setBusy] = useState(false);
@@ -166,13 +171,26 @@ export function FixVietnamese({ tracks, refresh, onBack }: { tracks: Track[]; re
 
   const apply = async () => {
     setBusy(true);
+    setMsg("Checking that the server is free…");
+    // The page's status can be a few seconds old: look again, so nothing waits on a running import.
+    try {
+      if (importing(await api.serverStatus())) {
+        setMsg(IMPORT_MSG);
+        setBusy(false);
+        return;
+      }
+    } catch {
+      /* the edits report their own errors */
+    }
     setMsg("");
+    let blocked = false;
     const failed: string[] = [];
     const notes = new Set<string>();
     const applied = new Set<string>();
     try {
       for (const kind of ["album", "artist"] as const) {
         for (const r of picked.filter((p) => p.kind === kind)) {
+          if (blocked) break;
           setMsg(`Renaming ${kind}s… ${applied.size + 1} of ${picked.length}`);
           try {
             const res = await api.renameGroup(kind, r.from, r.to.trim());
@@ -180,12 +198,14 @@ export function FixVietnamese({ tracks, refresh, onBack }: { tracks: Track[]; re
             applied.add(r.id);
           } catch (e) {
             failed.push(`${r.from}: ${e instanceof Error ? e.message : "failed"}`);
+            // The library is locked: every other name would wait just as long, so stop here.
+            if (isBusyError(e)) blocked = true;
           }
         }
       }
       const titles = picked.filter((p) => p.kind === "title");
       const edits = titles.flatMap((r) => r.ids.map((id) => ({ id, title: r.to.trim(), row: r.id })));
-      for (let i = 0; i < edits.length; i += 90) {
+      for (let i = 0; i < edits.length && !blocked; i += 90) {
         const chunk = edits.slice(i, i + 90);
         setMsg(`Changing titles… ${i} of ${edits.length} songs`);
         try {
@@ -194,6 +214,7 @@ export function FixVietnamese({ tracks, refresh, onBack }: { tracks: Track[]; re
           chunk.forEach((c) => applied.add(c.row));
         } catch (e) {
           failed.push(`${chunk.length} titles: ${e instanceof Error ? e.message : "failed"}`);
+          if (isBusyError(e)) blocked = true;
         }
       }
       // Remember what was decided about AI and earlier-corrected names, for the whole family: the names as applied
@@ -214,7 +235,7 @@ export function FixVietnamese({ tracks, refresh, onBack }: { tracks: Track[]; re
       setRows((rs) => (rs ?? []).filter((r) => !applied.has(r.id) || stillOpen.has(r.id)));
       setMsg(
         `Done: ${applied.size} name${applied.size === 1 ? "" : "s"} changed.` +
-          (failed.length ? ` ${failed.length} failed: ${failed.slice(0, 3).join("; ")}${failed.length > 3 ? "…" : ""}.` : "") +
+          (blocked ? ` Could not change the rest: the library is busy (an import is running). They are kept below; press Apply again when it finishes.` : failed.length ? ` ${failed.length} failed: ${failed.slice(0, 3).join("; ")}${failed.length > 3 ? "…" : ""}.` : "") +
           (notes.size ? ` ${[...notes].join(" ")}` : ""),
       );
     } finally {
@@ -243,8 +264,9 @@ export function FixVietnamese({ tracks, refresh, onBack }: { tracks: Track[]; re
               <strong>{picked.length} selected</strong>
               <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: true })))}>Select all</button>
               <button className="link" onClick={() => setRows((rs) => (rs ?? []).map((r) => ({ ...r, on: false })))}>Select none</button>
-              <button className="primary" onClick={() => void apply()} disabled={busy || picked.length === 0}>Apply {picked.length} changes</button>
+              <button className="primary" onClick={() => void apply()} disabled={busy || picked.length === 0 || importing(home)}>Apply {picked.length} changes</button>
             </p>
+            {importing(home) && <p className="muted">An import is running on the server. Apply is available again when it finishes.</p>}
             {KINDS.map(([kind, label]) => {
               const list = (rows ?? []).filter((r) => r.kind === kind);
               if (list.length === 0) return null;
