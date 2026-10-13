@@ -11,7 +11,8 @@ import { dispatchQueued } from "./ytqueue";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
 import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
-import { recordPlays, popular } from "./plays";
+import { recordPlays, recordSkips, popular } from "./plays";
+import { familyTaste } from "./taste";
 import { browse, clearLibraryCache, groupTracks, homeData, nameSuggestions, touchMember, tracksByIds, PAGE_GROUPED, PAGE_SONGS } from "./browse";
 import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
@@ -74,7 +75,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/plays", "/api/popular", "/api/mixes", "/api/mixes/*", "/api/art-urls", "/api/cast/*", "/api/vietnamese/*", "/api/home", "/api/browse", "/api/group", "/api/names"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/family/taste", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/plays", "/api/popular", "/api/mixes", "/api/mixes/*", "/api/art-urls", "/api/cast/*", "/api/vietnamese/*", "/api/home", "/api/browse", "/api/group", "/api/names"]) {
   app.use(p, needFamily);
 }
 
@@ -84,6 +85,9 @@ app.get("/api/family", async (c) => {
   const m = await membershipOf(c.env.DB, c.get("user").uid);
   return m ? c.json(await familyInfo(c.env.DB, m)) : c.json({ error: "no family" }, 404);
 });
+
+/** Every member's taste profile (top three artists and songs), rebuilt with the nightly mixes. */
+app.get("/api/family/taste", async (c) => c.json({ profiles: await familyTaste(c.env.DB, c.get("family").familyId) }));
 
 app.post("/api/family", async (c) => {
   const { name } = await c.req.json<{ name?: string }>();
@@ -183,11 +187,21 @@ app.delete("/api/playlists/:id", async (c) => {
 
 // ---- Plays, popularity and the nightly mixes ----------------------------------------------
 
-/** Plays to record: `[{ trackId, at }]`, `at` in epoch ms; the app sends them in batches after listening. */
+/**
+ * Plays and skips to record: `{ plays?: [{ trackId, at }], skips?: [...] }`, `at` in epoch ms; the app sends them in
+ * batches. A play is a song listened to for a minute or to its end; a skip is one the member moved on from sooner.
+ */
 app.post("/api/plays", async (c) => {
-  const b = await c.req.json<{ plays?: { trackId: string; at: number }[] }>().catch(() => null);
-  if (!Array.isArray(b?.plays)) return c.json({ error: "bad request" }, 400);
-  return c.json({ saved: await recordPlays(c.env.DB, c.get("family").familyId, c.get("user").uid, b!.plays) });
+  const b = await c.req.json<{ plays?: { trackId: string; at: number }[]; skips?: { trackId: string; at: number }[] }>().catch(() => null);
+  const plays = Array.isArray(b?.plays) ? b!.plays : null;
+  const skips = Array.isArray(b?.skips) ? b!.skips : null;
+  if (!plays && !skips) return c.json({ error: "bad request" }, 400);
+  const { familyId } = c.get("family");
+  const { uid } = c.get("user");
+  return c.json({
+    saved: plays ? await recordPlays(c.env.DB, familyId, uid, plays) : 0,
+    skipped: skips ? await recordSkips(c.env.DB, familyId, uid, skips) : 0,
+  });
 });
 
 /** The family's most played songs lately, most played first. */

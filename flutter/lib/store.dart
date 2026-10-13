@@ -21,7 +21,7 @@ class LocalStore {
   List<Map<String, String>> pending = []; // {'op': 'put'|'delete', 'id': playlistId}
   Map<String, int> ratings = {}; // my 1-5 star ratings by track id
   Map<String, int> pendingRatings = {}; // ratings not uploaded yet (0 = cleared)
-  List<Map<String, dynamic>> pendingPlays = []; // {'id': trackId, 'at': epoch ms} not uploaded yet
+  List<Map<String, dynamic>> pendingPlays = []; // {'id': trackId, 'at': epoch ms, 'skip': true for a skip} not uploaded yet
   Map<String, int> popular = {}; // family play counts by track id
   Map<String, Mix> mixes = {}; // my nightly AI mixes by day-part
 

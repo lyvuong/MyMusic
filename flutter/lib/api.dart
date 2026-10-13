@@ -101,9 +101,10 @@ class ApiClient {
   Future<Suggestion> suggest(String prompt) async =>
       Suggestion.fromJson(await _send('POST', '/api/suggest', body: {'prompt': prompt}, timeout: const Duration(seconds: 90)) as Map<String, dynamic>);
 
-  /// Uploads plays (`{'id', 'at'}`); the server ignores songs it does not know.
-  Future<void> postPlays(List<Map<String, dynamic>> plays) => _send('POST', '/api/plays', body: {
-        'plays': [for (final p in plays) {'trackId': p['id'], 'at': p['at']}],
+  /// Uploads plays and skips (`{'id', 'at'}`, plus `'skip': true` for a skip); the server ignores songs it does not know.
+  Future<void> postPlays(List<Map<String, dynamic>> events) => _send('POST', '/api/plays', body: {
+        'plays': [for (final p in events) if (p['skip'] != true) {'trackId': p['id'], 'at': p['at']}],
+        'skips': [for (final p in events) if (p['skip'] == true) {'trackId': p['id'], 'at': p['at']}],
       });
 
   /// The family's play counts by track id.

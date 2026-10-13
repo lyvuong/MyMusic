@@ -77,6 +77,8 @@ export async function removeMember(env: Env, uid: string): Promise<void> {
     db.prepare("DELETE FROM playlists WHERE owner_uid = ?").bind(uid),
     db.prepare("DELETE FROM ratings WHERE uid = ?").bind(uid),
     db.prepare("DELETE FROM plays WHERE uid = ?").bind(uid),
+    db.prepare("DELETE FROM skips WHERE uid = ?").bind(uid),
+    db.prepare("DELETE FROM taste_profiles WHERE uid = ?").bind(uid),
     db.prepare("DELETE FROM daily_mixes WHERE uid = ?").bind(uid),
     db.prepare("DELETE FROM members WHERE uid = ?").bind(uid),
   ]);
@@ -109,6 +111,9 @@ async function deleteFamily(env: Env, familyId: string) {
     env.DB.prepare("DELETE FROM playlists WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM ratings WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM plays WHERE family_id = ?").bind(familyId),
+    env.DB.prepare("DELETE FROM skips WHERE family_id = ?").bind(familyId),
+    env.DB.prepare("DELETE FROM taste_profiles WHERE family_id = ?").bind(familyId),
+    env.DB.prepare("DELETE FROM song_fame WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM daily_mixes WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM tracks WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM invites WHERE family_id = ?").bind(familyId),

@@ -1,6 +1,7 @@
 import type { BrowsePage, HomeData, MixInfo, Track } from "../shared/types";
 import { toTrack, type TrackRow } from "./library";
 import { getMixes } from "./mixes";
+import { wellKnown } from "./fame";
 import { popular } from "./plays";
 
 /**
@@ -124,7 +125,16 @@ async function cached<T>(db: D1Database, familyId: string, key: string, ttl: num
 
 /** The songs changed (a sync, an upload, a delete): the genre and most played lists are rebuilt on their next use. */
 export async function clearLibraryCache(db: D1Database, familyId: string): Promise<void> {
-  await db.prepare("DELETE FROM family_cache WHERE family_id = ? AND key IN ('genres', 'popular')").bind(familyId).run();
+  await db.prepare("DELETE FROM family_cache WHERE family_id = ? AND key IN ('genres', 'popular', 'fame_done')").bind(familyId).run();
+}
+
+/** The family's most played songs, topped up with the songs the AI knows as well-known hits until there are [limit]. */
+async function popularSongs(db: D1Database, familyId: string, limit: number): Promise<string[]> {
+  const played = (await popular(db, familyId, 90, limit)).map((p) => p.id);
+  if (played.length >= limit) return played;
+  const seen = new Set(played);
+  const hits = (await wellKnown(db, familyId, limit)).filter((id) => !seen.has(id));
+  return [...played, ...hits].slice(0, limit);
 }
 
 async function genreCounts(db: D1Database, familyId: string): Promise<{ name: string; count: number }[]> {
@@ -160,7 +170,7 @@ export async function homeData(db: D1Database, familyId: string, uid: string): P
   const [mixes, recentPage, popularIds, mine, genres, covers] = await Promise.all([
     getMixes(db, uid),
     browse(db, familyId, { limit: 120 }),
-    cached(db, familyId, "popular", POPULAR_TTL, async () => (await popular(db, familyId, 90, 40)).map((p) => p.id)),
+    cached(db, familyId, "popular", POPULAR_TTL, () => popularSongs(db, familyId, 40)),
     cached(db, familyId, `u:${uid}`, USER_LISTS_TTL, () => userLists(db, familyId, uid)),
     cached(db, familyId, "genres", GENRES_TTL, () => genreCounts(db, familyId)),
     db.prepare("SELECT COUNT(*) AS n FROM tracks WHERE family_id = ? AND source = 'r2' AND deleted = 0 AND art_key IS NULL AND art_tried = 0")

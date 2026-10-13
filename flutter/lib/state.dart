@@ -123,20 +123,31 @@ class AppState extends ChangeNotifier {
 
   List<Track> get recentTracks => [for (final id in store.recent) ?track(id)];
 
-  void markPlayed(String id) {
+  /// Puts the song at the top of "Recently played" (the app and the car screen). Whether it was really listened to is
+  /// decided later: see [countPlay] and [countSkip].
+  void markStarted(String id) {
     store.recent..remove(id)..insert(0, id);
     if (store.recent.length > 50) store.recent.removeRange(50, store.recent.length);
-    if (!id.startsWith('local:')) {
-      store.pendingPlays.add({'id': id, 'at': DateTime.now().millisecondsSinceEpoch});
-      if (store.pendingPlays.length > 500) store.pendingPlays.removeRange(0, store.pendingPlays.length - 500);
-      unawaited(_flushPlays());
-    }
+    unawaited(store.save());
+  }
+
+  /// A song heard for a minute or to its end: feeds the family's popular list and my mixes.
+  void countPlay(String id, int at) => _queueEvent(id, at, skip: false);
+
+  /// A song I moved on from within a minute: only shapes my own mixes, never the family's popular list.
+  void countSkip(String id, int at) => _queueEvent(id, at, skip: true);
+
+  void _queueEvent(String id, int at, {required bool skip}) {
+    if (id.startsWith('local:')) return;
+    store.pendingPlays.add({'id': id, 'at': at, if (skip) 'skip': true});
+    if (store.pendingPlays.length > 500) store.pendingPlays.removeRange(0, store.pendingPlays.length - 500);
+    unawaited(_flushPlays());
     unawaited(store.save());
   }
 
   bool _flushingPlays = false;
 
-  /// Uploads queued plays in batches of 50; whatever fails stays queued for the next play or sync.
+  /// Uploads queued plays and skips in batches of 50; whatever fails stays queued for the next play or sync.
   Future<void> _flushPlays() async {
     if (_flushingPlays || family == null) return;
     _flushingPlays = true;

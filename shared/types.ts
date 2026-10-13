@@ -35,6 +35,14 @@ export interface FamilyInfo {
   members: { uid: string; displayName: string; email: string; role: "owner" | "member" }[];
 }
 
+/** A member's top three artists and songs, from their own ratings, plays and skips (rebuilt with the nightly mixes). */
+export interface TasteProfile {
+  uid: string;
+  artists: { name: string; songs: number }[];
+  tracks: { id: string; title: string; artist: string }[];
+  builtAt: number;
+}
+
 /** An AI listening suggestion built from the caller's ratings. */
 export interface Suggestion {
   title: string;

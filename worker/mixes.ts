@@ -1,3 +1,5 @@
+import { judgeSongs } from "./fame";
+import { saveTaste, tasteProfile } from "./taste";
 import { DAYPARTS, DAYPART_HINT, loadRows, suggest, SuggestError, type Daypart } from "./suggest";
 
 /**
@@ -44,7 +46,10 @@ export async function buildMixesFor(env: Env, familyId: string, uid: string, for
     // Nobody opened the app since this mix was made, so it is still the one they would see: keep it.
     if (!force && built > 0 && lastSeen <= built) continue;
     try {
-      rows ??= await loadRows(env, familyId, uid);
+      if (!rows) {
+        rows = await loadRows(env, familyId, uid);
+        await saveTaste(env.DB, familyId, uid, tasteProfile(rows));
+      }
       const s = await suggest(env, familyId, uid, DAYPART_HINT[daypart], rows);
       await env.DB.prepare(
         "INSERT INTO daily_mixes (uid, family_id, daypart, title, intro, track_ids, generated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
@@ -71,7 +76,20 @@ export async function buildMixSlice(env: Env, offset: number, limit: number): Pr
   const members = await env.DB.prepare("SELECT uid, family_id, last_seen_at FROM members ORDER BY uid LIMIT ? OFFSET ?")
     .bind(take, Math.max(Math.floor(offset) || 0, 0)).all<{ uid: string; family_id: string; last_seen_at: number }>();
   let mixes = 0;
+  // Songs the AI has not rated for popularity yet (a couple of batches per family per run), before the mixes use them.
+  for (const familyId of new Set(members.results.map((m) => m.family_id))) await judgeFamily(env, familyId);
   for (const m of members.results) mixes += await buildMixesFor(env, m.family_id, m.uid, false, m.last_seen_at);
   return { members: members.results.length, mixes };
 }
 
+/** Judges song popularity for a family unless everything was judged and the library has not changed since. */
+async function judgeFamily(env: Env, familyId: string): Promise<void> {
+  const done = await env.DB.prepare("SELECT 1 AS x FROM family_cache WHERE family_id = ? AND key = 'fame_done'").bind(familyId).first();
+  if (done) return;
+  const r = await judgeSongs(env, familyId);
+  if (r.judged > 0) await env.DB.prepare("DELETE FROM family_cache WHERE family_id = ? AND key = 'popular'").bind(familyId).run();
+  if (r.done) {
+    await env.DB.prepare("INSERT OR REPLACE INTO family_cache (family_id, key, json, built_at) VALUES (?, 'fame_done', 'true', ?)")
+      .bind(familyId, Date.now()).run();
+  }
+}

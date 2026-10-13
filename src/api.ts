@@ -1,4 +1,4 @@
-import type { BeetsRun, BrowsePage, FamilyInfo, HomeData, Playlist, ServerStatus, Suggestion, Track, YoutubeInfo } from "../shared/types";
+import type { BeetsRun, BrowsePage, FamilyInfo, HomeData, Playlist, ServerStatus, Suggestion, TasteProfile, Track, YoutubeInfo } from "../shared/types";
 import { auth } from "./firebase";
 
 export class ApiError extends Error {
@@ -49,6 +49,7 @@ export const api = {
   createFamily: (name: string) => call<FamilyInfo>("POST", "/api/family", { name }),
   joinFamily: (code: string) => call<FamilyInfo>("POST", "/api/family/join", { code }),
   invite: () => call<{ code: string; expiresAt: number }>("POST", "/api/family/invites"),
+  taste: async (): Promise<TasteProfile[]> => (await call<{ profiles: TasteProfile[] }>("GET", "/api/family/taste")).profiles,
   removeMember: (uid: string) => call<void>("DELETE", `/api/family/members/${uid}`),
   deleteAccount: () => call<void>("DELETE", "/api/account"),
   /** Playlists, and (unless `tracks` is false) the songs changed after `since`; since = 0 with tracks is the whole library. */

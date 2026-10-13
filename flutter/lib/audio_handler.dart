@@ -41,6 +41,14 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   int _gen = 0; // bumped on every load so a slow, superseded load is ignored
   int _failures = 0;
 
+  // What counts as a play: a song heard for a minute (paused time does not count) or to its end. Moving on to another
+  // song sooner is a skip. Plays feed the family's popular list; skips only shape my own mixes.
+  static const _listenedFor = Duration(seconds: 60);
+  final _listened = Stopwatch();
+  String? _listenId; // the song being listened to, until it is counted or left
+  int _listenAt = 0; // when it started, epoch ms
+  bool _listenCounted = false;
+
   /// The last reason a track could not be loaded, for the UI to show (null when none).
   final playError = ValueNotifier<String?>(null);
 
@@ -51,6 +59,42 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     _player.processingStateStream.listen((s) {
       if (s == ProcessingState.completed) unawaited(_onCompleted());
     });
+    _player.playerStateStream.listen((s) {
+      if (s.playing && s.processingState == ProcessingState.ready) {
+        _listened.start();
+      } else {
+        _listened.stop();
+      }
+    });
+    _player.positionStream.listen((_) => _countIfListened());
+  }
+
+  void _beginListen(String id) {
+    _listened..stop()..reset();
+    _listenId = id;
+    _listenAt = DateTime.now().millisecondsSinceEpoch;
+    _listenCounted = false;
+  }
+
+  void _countIfListened() {
+    final id = _listenId;
+    if (id == null || _listenCounted || _listened.elapsed < _listenedFor) return;
+    _listenCounted = true;
+    app.countPlay(id, _listenAt);
+  }
+
+  /// Done with the current song: it was [completed], the listener [moved] on to another one, or neither (stopped).
+  void _endListen({bool completed = false, bool moved = false}) {
+    final id = _listenId;
+    if (id == null) return;
+    _listenId = null;
+    _listened.stop();
+    if (_listenCounted) return;
+    if (completed || _listened.elapsed >= _listenedFor) {
+      app.countPlay(id, _listenAt);
+    } else if (moved) {
+      app.countSkip(id, _listenAt);
+    }
   }
 
   // ---- Playback state -----------------------------------------------------------------------
@@ -144,6 +188,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     _pos = pos;
     final i = _order[pos];
     final track = _tracks[i];
+    // Picking the same song again is a restart, not a skip.
+    _endListen(moved: _listenId != track.id);
     mediaItem.add(_items[i]);
     _broadcast();
     try {
@@ -152,7 +198,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       await _player.setAudioSource(source);
       if (gen != _gen) return;
       _failures = 0;
-      app.markPlayed(track.id);
+      app.markStarted(track.id);
+      _beginListen(track.id);
       unawaited(_player.play());
     } catch (e) {
       if (gen != _gen) return;
@@ -167,7 +214,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Future<void> _onCompleted() async {
+    final id = _listenId;
+    _endListen(completed: true);
     if (_repeat == AudioServiceRepeatMode.one) {
+      if (id != null) _beginListen(id);
       await _player.seek(Duration.zero);
       unawaited(_player.play());
     } else if (_pos + 1 < _order.length) {
@@ -191,6 +241,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   @override
   Future<void> stop() async {
     _gen++;
+    _endListen();
     await _player.stop();
     return super.stop();
   }

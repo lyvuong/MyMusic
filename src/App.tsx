@@ -1,6 +1,6 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, Track, YoutubeInfo } from "../shared/types";
+import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, TasteProfile, Track, YoutubeInfo } from "../shared/types";
 import { api } from "./api";
 import { AiBadge, ArtistPic, Cover } from "./art";
 import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } from "./browse";
@@ -801,6 +801,12 @@ function Family({ family, uid, reload }: { family: FamilyInfo; uid: string; relo
   const isOwner = family.role === "owner";
   const [invite, setInvite] = useState<{ code: string; expiresAt: number } | null>(null);
   const [note, setNote] = useState("");
+  const [taste, setTaste] = useState<Map<string, TasteProfile>>(new Map());
+  useEffect(() => {
+    let live = true;
+    api.taste().then((ps) => live && setTaste(new Map(ps.map((p) => [p.uid, p])))).catch(() => {});
+    return () => { live = false; };
+  }, []);
   const createInvite = async () => {
     setNote("");
     try {
@@ -828,6 +834,12 @@ function Family({ family, uid, reload }: { family: FamilyInfo; uid: string; relo
               <span className="grow">
                 <strong>{name}{m.uid === uid && <small> (you)</small>}</strong>
                 <small>{m.role === "owner" ? "Owner" : "Member"}{m.displayName && m.email ? ` · ${m.email}` : ""}</small>
+                {(taste.get(m.uid)?.artists.length ?? 0) > 0 && (
+                  <small className="muted">Top artists: {taste.get(m.uid)!.artists.map((a) => a.name).join(", ")}</small>
+                )}
+                {(taste.get(m.uid)?.tracks.length ?? 0) > 0 && (
+                  <small className="muted">Top songs: {taste.get(m.uid)!.tracks.map((t) => t.title).join(", ")}</small>
+                )}
               </span>
               {isOwner && m.uid !== uid && (
                 <button className="link danger" aria-label={`Remove ${name}`} onClick={async () => {
