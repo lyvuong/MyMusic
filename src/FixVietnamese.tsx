@@ -187,6 +187,7 @@ export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track
     const failed: string[] = [];
     const notes = new Set<string>();
     const applied = new Set<string>();
+    const gone = new Set<string>();
     try {
       for (const kind of ["album", "artist"] as const) {
         for (const r of picked.filter((p) => p.kind === kind)) {
@@ -197,6 +198,12 @@ export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track
             if (res.warning) notes.add(res.warning);
             applied.add(r.id);
           } catch (e) {
+            // The name is no longer in the library (already renamed or merged): nothing is left to do, so drop the row
+            // instead of keeping it as a failure that would come back on every Apply.
+            if (e instanceof Error && /nothing to rename/i.test(e.message)) {
+              gone.add(r.id);
+              continue;
+            }
             failed.push(`${r.from}: ${e instanceof Error ? e.message : "failed"}`);
             // The library is locked: every other name would wait just as long, so stop here.
             if (isBusyError(e)) blocked = true;
@@ -232,9 +239,10 @@ export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track
       }
       await refresh();
       const stillOpen = new Set(failed.length ? picked.filter((p) => !applied.has(p.id)).map((p) => p.id) : []);
-      setRows((rs) => (rs ?? []).filter((r) => !applied.has(r.id) || stillOpen.has(r.id)));
+      setRows((rs) => (rs ?? []).filter((r) => gone.has(r.id) ? false : !applied.has(r.id) || stillOpen.has(r.id)));
       setMsg(
         `Done: ${applied.size} name${applied.size === 1 ? "" : "s"} changed.` +
+          (gone.size ? ` ${gone.size} no longer in the library, so removed from the list.` : "") +
           (blocked ? ` Could not change the rest: the library is busy (an import is running). They are kept below; press Apply again when it finishes.` : failed.length ? ` ${failed.length} failed: ${failed.slice(0, 3).join("; ")}${failed.length > 3 ? "…" : ""}.` : "") +
           (notes.size ? ` ${[...notes].join(" ")}` : ""),
       );
