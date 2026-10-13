@@ -1,4 +1,5 @@
 import { judgeSongs } from "./fame";
+import { fillGenres } from "./genres";
 import { saveTaste, tasteProfile } from "./taste";
 import { DAYPARTS, DAYPART_HINT, loadRows, suggest, SuggestError } from "./suggest";
 import { buildThemedMixes, THEME_PREFIX } from "./themes";
@@ -121,7 +122,11 @@ export async function buildMixSlice(env: Env, offset: number, limit: number): Pr
     .bind(take, Math.max(Math.floor(offset) || 0, 0)).all<{ uid: string; family_id: string; last_seen_at: number }>();
   let mixes = 0;
   // Songs the AI has not rated for popularity yet (a couple of batches per family per run), before the mixes use them.
-  for (const familyId of new Set(members.results.map((m) => m.family_id))) await judgeFamily(env, familyId);
+  for (const familyId of new Set(members.results.map((m) => m.family_id))) {
+    await judgeFamily(env, familyId);
+    // Genres for untagged songs (from the artist's tagged songs, then the AI), so the themed mixes can use them.
+    await fillGenres(env, familyId).catch((e) => console.warn(`genres for ${familyId} failed:`, e instanceof Error ? e.message : e));
+  }
   for (const m of members.results) mixes += await buildMixesFor(env, m.family_id, m.uid, false, m.last_seen_at);
   return { members: members.results.length, mixes };
 }

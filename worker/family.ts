@@ -114,6 +114,7 @@ async function deleteFamily(env: Env, familyId: string) {
     env.DB.prepare("DELETE FROM skips WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM taste_profiles WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM song_fame WHERE family_id = ?").bind(familyId),
+    env.DB.prepare("DELETE FROM artist_genres WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM daily_mixes WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM tracks WHERE family_id = ?").bind(familyId),
     env.DB.prepare("DELETE FROM invites WHERE family_id = ?").bind(familyId),

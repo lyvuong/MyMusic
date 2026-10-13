@@ -110,7 +110,8 @@ export function buildContext(all: Row[], avoid?: Set<string>) {
 export async function loadRows(env: Env, familyId: string, uid: string): Promise<Row[]> {
   const now = Date.now();
   const rows = await env.DB.prepare(
-    "SELECT t.id, t.title, t.artist, t.album, t.genre, t.duration, (t.art_key IS NOT NULL) AS hasArt, r.rating, p.n AS plays, m.n AS myPlays, s.n AS skips, sf.score AS fame FROM tracks t " +
+    "SELECT t.id, t.title, t.artist, t.album, COALESCE(NULLIF(t.genre, ''), ag.genre, '') AS genre, t.duration, (t.art_key IS NOT NULL) AS hasArt, r.rating, p.n AS plays, m.n AS myPlays, s.n AS skips, sf.score AS fame FROM tracks t " +
+      "LEFT JOIN artist_genres ag ON ag.family_id = t.family_id AND ag.artist = t.artist " +
       "LEFT JOIN ratings r ON r.track_id = t.id AND r.uid = ? " +
       "LEFT JOIN (SELECT track_id, COUNT(*) AS n FROM plays WHERE family_id = ? AND played_at > ? GROUP BY track_id) p ON p.track_id = t.id " +
       "LEFT JOIN song_fame sf ON sf.track_id = t.id " +
