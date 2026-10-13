@@ -44,14 +44,16 @@ export interface TrackEdit { title?: string; artist?: string; album?: string; tr
 /**
  * An artist or album name may already exist spelled with decomposed diacritics (common in file tags). Returns that
  * stored spelling when it is the same text as `name`, so a rename or merge lands on the existing entry, else `name`.
+ * `from` is the spelling being renamed: it is not a merge target (renaming a decomposed name to its composed form
+ * must change it, not land on itself).
  */
-async function canonicalName(db: D1Database, familyId: string, col: "artist" | "album", name: string): Promise<string> {
+async function canonicalName(db: D1Database, familyId: string, col: "artist" | "album", name: string, from?: string): Promise<string> {
   // Only the plain and the decomposed spelling are looked up (through the name index), not every name in the library.
   const decomposed = name.normalize("NFD");
   if (decomposed === name) return name;
   const rows = await db.prepare(`SELECT ${col} AS n FROM tracks WHERE family_id = ? AND deleted = 0 AND ${col} IN (?, ?) LIMIT 2`)
     .bind(familyId, name, decomposed).all<{ n: string }>();
-  const names = rows.results.map((r) => r.n);
+  const names = rows.results.map((r) => r.n).filter((n) => n !== from);
   return names.includes(name) ? name : (names.find((n) => n.normalize("NFC") === name) ?? name);
 }
 
@@ -138,7 +140,7 @@ export async function renameGroup(
   beforeCommit?: (plan: { target: string; nas: number }) => Promise<void>,
 ): Promise<{ updated: number; target: string; nas: number }> {
   const col = kind === "artist" ? "artist" : "album";
-  const target = await canonicalName(db, familyId, col, to);
+  const target = await canonicalName(db, familyId, col, to, from);
   if (target === from) return { updated: 0, target, nas: 0 };
   const nas = await db.prepare(`SELECT COUNT(*) AS n FROM tracks WHERE family_id = ? AND deleted = 0 AND source = 'nas' AND ${col} = ?`)
     .bind(familyId, from).first<{ n: number }>();

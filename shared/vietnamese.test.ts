@@ -43,6 +43,13 @@ describe("cleanVietnamese", () => {
     expect(cleanVietnamese("Hu+o+ng Ca^`n")?.reason).toBe("typed");
     expect(cleanVietnamese("CÒN YÊU")?.reason).toBe("case");
   });
+
+  it("reports a decomposed name as a change of form only", () => {
+    const decomposed = "Khánh Hà";
+    const r = cleanVietnamese(decomposed);
+    expect(r?.reason).toBe("form");
+    expect(r?.text).toBe("Khánh Hà");
+  });
 });
 
 describe("accent candidates and the AI guard", () => {

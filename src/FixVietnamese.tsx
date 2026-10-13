@@ -12,7 +12,7 @@ interface Fix {
   to: string;
   /** The songs that carry this name (a title is applied to each of them). */
   ids: string[];
-  reason: "typed" | "case" | "accents" | "learned";
+  reason: "typed" | "case" | "form" | "accents" | "learned";
   on: boolean;
 }
 
@@ -20,7 +20,7 @@ interface Ask { id: string; kind: Kind; from: string; ids: string[]; artist?: st
 
 const KINDS: [Kind, string][] = [["album", "Albums"], ["artist", "Artists"], ["title", "Titles"]];
 const KIND_LABEL: Record<Kind, string> = { album: "Album", artist: "Artist", title: "Song" };
-const REASON: Record<Fix["reason"], string> = { typed: "typed marks", case: "capitals / spacing", accents: "AI: accents", learned: "your earlier fix" };
+const REASON: Record<Fix["reason"], string> = { typed: "typed marks", case: "capitals / spacing", form: "same look, accents stored as separate marks", accents: "AI: accents", learned: "your earlier fix" };
 
 /** Finds what the clean-up can fix by rules, and which names are worth asking the AI about. Runs in the browser. */
 function scan(tracks: Track[]): { fixes: Fix[]; asks: Ask[] } {

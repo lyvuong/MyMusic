@@ -53,7 +53,7 @@ export function decodeTyped(text: string): string {
   return s;
 }
 
-export type FixReason = "typed" | "case";
+export type FixReason = "typed" | "case" | "form";
 
 /**
  * The deterministic clean-up of one name: typed marks decoded, then, for Vietnamese text, spacing normalised and every
@@ -69,6 +69,8 @@ export function cleanVietnamese(text: string): { text: string; reason: FixReason
     s = capitalise(s);
   }
   if (s === text) return null;
+  // The same letters written as base letter + separate accent marks: looks identical, only the encoding changes.
+  if (!typed && s === text.normalize("NFC")) return { text: s, reason: "form" };
   return { text: s, reason: typed ? "typed" : "case" };
 }
 
