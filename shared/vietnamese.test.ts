@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanVietnamese, decodeTyped, fold, hasVietnamese, maybeNeedsAccents, onlyAddsMarks } from "./vietnamese";
+import { nameContexts, cleanVietnamese, decodeTyped, fold, hasVietnamese, maybeNeedsAccents, onlyAddsMarks } from "./vietnamese";
 
 const nfc = (s: string) => s.normalize("NFC");
 
@@ -60,7 +60,9 @@ describe("accent candidates and the AI guard", () => {
   });
 
   it("treats any unaccented title as a candidate when the artist is Vietnamese", () => {
-    expect(maybeNeedsAccents("Perfect Day", true)).toBe(true);
+    expect(maybeNeedsAccents("Perfect Day", true)).toBe(false); // English words stay out even with a Vietnamese artist
+    expect(maybeNeedsAccents("Tinh Ca", true)).toBe(true);
+    expect(maybeNeedsAccents("Blue Moon")).toBe(false);
     expect(hasVietnamese("Hương")).toBe(true);
   });
 
@@ -72,5 +74,41 @@ describe("accent candidates and the AI guard", () => {
     expect(onlyAddsMarks("Con Yeu Em Mai", "")).toBe(false);
     expect(onlyAddsMarks("Tinh Ca", "Tình Ca")).toBe(true);
     expect(onlyAddsMarks("greatest hits", "Greatest Hits")).toBe(false); // only capitals: not Vietnamese
+  });
+});
+
+describe("validSyllables", () => {
+  it("accepts real Vietnamese words and leaves unmarked words alone", () => {
+    expect(onlyAddsMarks("Con Yeu Em Mai", "Còn Yêu Em Mãi")).toBe(true);
+    expect(onlyAddsMarks("Nguoi Yeu Dau Tien", "Người Yêu Đầu Tiên")).toBe(true);
+    expect(onlyAddsMarks("Mot Lan Nua", "Một Lần Nữa")).toBe(true);
+    expect(onlyAddsMarks("Khuc Hat Mua Xuan", "Khúc Hát Mùa Xuân")).toBe(true);
+    expect(onlyAddsMarks("Anh Yeu Em", "Anh Yêu Em")).toBe(true);
+  });
+
+  it("rejects invented spellings", () => {
+    expect(onlyAddsMarks("Nguoi Yeu", "Ngừơi Yểu")).toBe(false); // tone on ư instead of ơ
+    expect(onlyAddsMarks("Mat Troi", "Mằt Trời")).toBe(false); // grave tone on a -t syllable
+    expect(onlyAddsMarks("Dem Mua", "Đêm Mưạ")).toBe(false); // tone on the wrong vowel
+    expect(onlyAddsMarks("Mot Lan", "Mộtt Lần")).toBe(false);
+  });
+});
+
+describe("nameContexts", () => {
+  const tracks = [
+    { artist: "Trịnh Công Sơn", album: "Tình Ca", title: "Còn Yêu Em Mãi" },
+    { artist: "Trịnh Công Sơn", album: "Tình Ca", title: "Nhớ Một Người" },
+    { artist: "Trinh Cong Son", album: "Tinh Ca", title: "Nguoi Ve" },
+  ];
+  const ctx = nameContexts(tracks);
+
+  it("gives the spellings the library already uses", () => {
+    expect(ctx("title", "Con Yeu Em Mai", "Trinh Cong Son", "Tinh Ca").hints).toContain("yeu=yêu");
+    expect(ctx("title", "Nguoi Ve").hints).toContain("nguoi=người");
+  });
+
+  it("gives accented names of the same artist or album", () => {
+    expect(ctx("artist", "Trịnh Công Sơn").samples).toEqual(["Còn Yêu Em Mãi", "Tình Ca", "Nhớ Một Người"]);
+    expect(ctx("title", "Nguoi Ve", "Trinh Cong Son", "Tinh Ca").samples).toEqual([]);
   });
 });

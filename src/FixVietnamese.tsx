@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ServerStatus, Track } from "../shared/types";
-import { cleanVietnamese, fold, hasVietnamese, maybeNeedsAccents } from "../shared/vietnamese";
+import { accentVocab, cleanVietnamese, fold, hasVietnamese, maybeNeedsAccents, nameContexts } from "../shared/vietnamese";
 import { api } from "./api";
 
 type Kind = "album" | "artist" | "title";
@@ -16,7 +16,7 @@ interface Fix {
   on: boolean;
 }
 
-interface Ask { id: string; kind: Kind; from: string; ids: string[]; artist?: string; album?: string; /** Set when the AI was asked and left it as it was. */ note?: string }
+interface Ask { id: string; kind: Kind; from: string; ids: string[]; artist?: string; album?: string; }
 
 const KINDS: [Kind, string][] = [["album", "Albums"], ["artist", "Artists"], ["title", "Titles"]];
 const KIND_LABEL: Record<Kind, string> = { album: "Album", artist: "Artist", title: "Song" };
@@ -27,6 +27,7 @@ function scan(tracks: Track[]): { fixes: Fix[]; asks: Ask[] } {
   const live = tracks.filter((t) => !t.deleted);
   const vnArtists = new Set(live.filter((t) => hasVietnamese(t.artist)).map((t) => t.artist));
   const vnAlbums = new Set(live.filter((t) => hasVietnamese(t.album)).map((t) => t.album));
+  const vocab = accentVocab(live.flatMap((t) => [t.title, t.album, t.artist]));
   const fixes: Fix[] = [];
   const asks: Ask[] = [];
   const run = (kind: Kind, get: (t: Track) => string) => {
@@ -46,7 +47,7 @@ function scan(tracks: Track[]): { fixes: Fix[]; asks: Ask[] } {
         continue;
       }
       const context = kind !== "artist" && (vnArtists.has(first.artist) || (kind === "title" && vnAlbums.has(first.album)));
-      if (maybeNeedsAccents(from, context)) {
+      if (maybeNeedsAccents(from, context, vocab)) {
         asks.push({ id: `${kind}:${from}`, kind, from, ids: ts.map((t) => t.id), artist: kind === "artist" ? undefined : first.artist, album: kind === "title" ? first.album : undefined });
       }
     }
@@ -115,6 +116,8 @@ export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track
   /** Asks the AI about the given names, in batches, and adds the valid suggestions as rows to review. */
   const askAi = async (todo: Ask[]) => {
     stop.current = false;
+    // What the library already spells with accents, so the AI follows it instead of guessing.
+    const context = nameContexts(tracks);
     setBusy(true);
     setFresh(new Set());
     const fixed: Fix[] = [];
@@ -124,7 +127,7 @@ export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track
       for (let i = 0; i < todo.length && !stop.current; i += 25) {
         const batch = todo.slice(i, i + 25);
         setMsg(`Asking the AI… ${i} of ${todo.length} names`);
-        const { results } = await api.restoreVietnamese(batch.map((a) => ({ key: a.id, text: a.from, kind: a.kind, artist: a.artist, album: a.album })));
+        const { results } = await api.restoreVietnamese(batch.map((a) => ({ key: a.id, text: a.from, kind: a.kind, artist: a.artist, album: a.album, ...context(a.kind, a.from, a.artist, a.album) })));
         const answers = new Map(results.map((r) => [r.key, r.text]));
         const added: Fix[] = [];
         for (const a of batch) {
@@ -145,8 +148,17 @@ export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track
           (fixed.length
             ? `The AI suggested ${fixed.length} change${fixed.length === 1 ? "" : "s"}: ${list(fixed.map((f) => `${f.from} → ${f.to}`))}. Review them in the list below, untick or edit any that are wrong, then apply.`
             : "The AI did not suggest any change.") +
-          (noChange.length ? ` Left as they are: ${list(noChange)} (not Vietnamese, or the AI was not sure).` : ""),
+          (noChange.length ? ` Left as they are: ${list(noChange)} (not Vietnamese, or the AI was not sure); they are removed from the list and will not be offered again.` : ""),
       );
+      // What the AI left alone is not offered again: remember it the same way as a name you unticked.
+      if (unchanged.size > 0 && !stop.current) {
+        const leave = [...unchanged].map((id) => ({ from: todo.find((a) => a.id === id)!.from, to: todo.find((a) => a.id === id)!.from }));
+        try {
+          for (let i = 0; i < leave.length; i += 200) await api.saveVietnameseCorrections(leave.slice(i, i + 200));
+        } catch {
+          /* it will be offered again next scan */
+        }
+      }
       // Show what the AI suggested on the review page.
       setFresh(new Set(fixed.map((f) => f.id)));
       if (fixed.length) {
@@ -156,9 +168,9 @@ export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track
     } catch (e) {
       setMsg(`${e instanceof Error ? e.message : "The AI request failed"} (${fixed.length} suggestions found before that).`);
     } finally {
-      // A name with a suggestion moves to the review list; one the AI left alone stays here, marked, so nothing vanishes.
-      const moved = new Set(fixed.map((f) => f.id));
-      setAsks((as) => as.filter((a) => !moved.has(a.id)).map((a) => (unchanged.has(a.id) ? { ...a, note: "The AI found nothing to change" } : a)));
+      // A name with a suggestion moves to the review list; one the AI left alone leaves the list.
+      const gone = new Set([...fixed.map((f) => f.id), ...unchanged]);
+      setAsks((as) => as.filter((a) => !gone.has(a.id)));
       setChosen(new Set());
       setBusy(false);
     }
@@ -349,7 +361,7 @@ export function FixVietnamese({ tracks, refresh, home, onBack }: { tracks: Track
                 />
                 <div className="fixv-names">
                   <strong>{a.from}</strong>
-                  <small className="muted">{[KIND_LABEL[a.kind], a.kind !== "artist" ? a.artist : "", a.ids.length > 1 ? `${a.ids.length} songs` : "", a.note ?? ""].filter(Boolean).join(" · ")}</small>
+                  <small className="muted">{[KIND_LABEL[a.kind], a.kind !== "artist" ? a.artist : "", a.ids.length > 1 ? `${a.ids.length} songs` : ""].filter(Boolean).join(" · ")}</small>
                 </div>
               </li>
             ))}

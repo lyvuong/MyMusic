@@ -368,10 +368,12 @@ app.post("/api/vietnamese/restore", async (c) => {
   const raw = Array.isArray(b?.items) ? (b.items as Record<string, unknown>[]) : null;
   if (!raw || raw.length === 0 || raw.length > 25) return c.json({ error: "send 1 to 25 names" }, 400);
   const items: AccentItem[] = [];
+  const strings = (v: unknown, max: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, max).map((x) => x.slice(0, 200)) : undefined);
   for (const it of raw) {
     const text = typeof it?.text === "string" ? it.text.trim() : "";
     if (typeof it?.key !== "string" || it.key.length > 80 || !text || text.length > 200) return c.json({ error: "bad name" }, 400);
-    items.push({ key: it.key, text, kind: it.kind === "title" || it.kind === "album" || it.kind === "artist" ? it.kind : undefined, artist: typeof it.artist === "string" ? it.artist.slice(0, 200) : undefined, album: typeof it.album === "string" ? it.album.slice(0, 200) : undefined });
+    items.push({ key: it.key, text, kind: it.kind === "title" || it.kind === "album" || it.kind === "artist" ? it.kind : undefined, artist: typeof it.artist === "string" ? it.artist.slice(0, 200) : undefined, album: typeof it.album === "string" ? it.album.slice(0, 200) : undefined,
+      hints: strings(it.hints, 12), samples: strings(it.samples, 3) });
   }
   try {
     const learned = await loadCorrections(c.env.DB, c.get("family").familyId);
