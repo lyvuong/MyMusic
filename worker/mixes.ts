@@ -1,29 +1,37 @@
 import { judgeSongs } from "./fame";
 import { saveTaste, tasteProfile } from "./taste";
-import { DAYPARTS, DAYPART_HINT, loadRows, suggest, SuggestError, type Daypart } from "./suggest";
+import { DAYPARTS, DAYPART_HINT, loadRows, suggest, SuggestError } from "./suggest";
+import { buildThemedMixes, THEME_PREFIX } from "./themes";
 
 /**
- * Nightly AI mixes. The home server calls /api/beets/agent/mixes once a night (the free Workers plan has no spare cron
- * triggers); it builds, for every family member, one playlist per time of day (morning, afternoon, evening, night) from
- * their ratings and what the family plays most. The app downloads them on sync, so the car screen never waits for the
- * AI. Day-parts are relative; the app picks the one that matches the phone's local hour.
+ * Nightly mixes. The home server calls /api/beets/agent/mixes once a night (the free Workers plan has no spare cron
+ * triggers); it builds, for every family member, one AI playlist per time of day (morning, afternoon, evening, night)
+ * from their ratings and what the family plays most, and a set of themed hour-long mixes (Vietnamese, pop, love songs,
+ * ... see themes.ts) drawn from the whole library. The app downloads them on sync, so the car screen never waits.
+ * Day-parts are relative; the app picks the one that matches the phone's local hour.
  */
 
 export interface Mix {
-  daypart: Daypart;
+  /** A day-part, or a theme key ("theme-vietnamese"). */
+  daypart: string;
   title: string;
   intro: string;
   trackIds: string[];
   generatedAt: number;
+  /** The song whose cover stands for the mix ("" = the first song that has one). */
+  cover: string;
+  rank: number;
 }
 
 const FRESH_MS = 20 * 3600 * 1000;
-const MAX_MEMBERS_PER_CALL = 5; // 4 AI calls each: keeps one request short
+const MAX_MEMBERS_PER_CALL = 5; // 4 AI calls and a library read each: keeps one request short
 
 export async function getMixes(db: D1Database, uid: string): Promise<Mix[]> {
-  const r = await db.prepare("SELECT daypart, title, intro, track_ids, generated_at FROM daily_mixes WHERE uid = ?")
-    .bind(uid).all<{ daypart: Daypart; title: string; intro: string; track_ids: string; generated_at: number }>();
-  return r.results.map((m) => ({ daypart: m.daypart, title: m.title, intro: m.intro, trackIds: parseIds(m.track_ids), generatedAt: m.generated_at }));
+  const r = await db.prepare("SELECT daypart, title, intro, track_ids, generated_at, cover, rank FROM daily_mixes WHERE uid = ? ORDER BY rank, daypart")
+    .bind(uid).all<{ daypart: string; title: string; intro: string; track_ids: string; generated_at: number; cover: string; rank: number }>();
+  return r.results.map((m) => ({
+    daypart: m.daypart, title: m.title, intro: m.intro, trackIds: parseIds(m.track_ids), generatedAt: m.generated_at, cover: m.cover, rank: m.rank,
+  }));
 }
 
 function parseIds(s: string): string[] {
@@ -35,22 +43,36 @@ function parseIds(s: string): string[] {
   }
 }
 
-/** Builds the four mixes for one member. A failed day-part keeps yesterday's mix. Returns how many were saved. */
+/** Builds the day-part mixes and the themed ones for one member. A failed one keeps its old version. Returns how many were saved. */
 export async function buildMixesFor(env: Env, familyId: string, uid: string, force = false, lastSeen = Infinity): Promise<number> {
-  const existing = new Map((await getMixes(env.DB, uid)).map((m) => [m.daypart, m.generatedAt]));
+  const all = await getMixes(env.DB, uid);
+  const existing = new Map(all.map((m) => [m.daypart, m]));
+  const themed = all.filter((m) => m.daypart.startsWith(THEME_PREFIX));
   let saved = 0;
-  let rows: Awaited<ReturnType<typeof loadRows>> | undefined; // one read of the library for all four day-parts
+  let rows: Awaited<ReturnType<typeof loadRows>> | undefined; // one read of the library for every mix
+  const load = async () => {
+    if (!rows) {
+      rows = await loadRows(env, familyId, uid);
+      await saveTaste(env.DB, familyId, uid, tasteProfile(rows));
+    }
+    return rows;
+  };
+  // Nobody opened the app since this mix was made, so it is still the one they would see: keep it.
+  const due = (built: number) => force || (Date.now() - built >= FRESH_MS && !(built > 0 && lastSeen <= built));
+
+  try {
+    // Themed mixes need no AI call, so they come first and cannot be lost to one that fails.
+    const built = themed.length === 0 ? 0 : Math.min(...themed.map((m) => m.generatedAt));
+    if (due(built)) saved += await saveThemed(env, familyId, uid, await load(), themed);
+  } catch (e) {
+    console.warn(`themed mixes for ${uid} failed:`, e instanceof Error ? e.message : e);
+  }
+
   for (const daypart of DAYPARTS) {
-    const built = existing.get(daypart) ?? 0;
-    if (!force && Date.now() - built < FRESH_MS) continue;
-    // Nobody opened the app since this mix was made, so it is still the one they would see: keep it.
-    if (!force && built > 0 && lastSeen <= built) continue;
+    const prev = existing.get(daypart);
+    if (!due(prev?.generatedAt ?? 0)) continue;
     try {
-      if (!rows) {
-        rows = await loadRows(env, familyId, uid);
-        await saveTaste(env.DB, familyId, uid, tasteProfile(rows));
-      }
-      const s = await suggest(env, familyId, uid, DAYPART_HINT[daypart], rows);
+      const s = await suggest(env, familyId, uid, DAYPART_HINT[daypart], await load(), new Set(prev?.trackIds));
       await env.DB.prepare(
         "INSERT INTO daily_mixes (uid, family_id, daypart, title, intro, track_ids, generated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT(uid, daypart) DO UPDATE SET family_id = excluded.family_id, title = excluded.title, intro = excluded.intro, " +
@@ -63,6 +85,28 @@ export async function buildMixesFor(env: Env, familyId: string, uid: string, for
     }
   }
   return saved;
+}
+
+/** Replaces the member's themed mixes with tonight's; themes that no longer have enough songs are removed. */
+async function saveThemed(env: Env, familyId: string, uid: string, rows: Awaited<ReturnType<typeof loadRows>>, old: Mix[]): Promise<number> {
+  const profile = tasteProfile(rows);
+  // Yesterday's songs come back only when nothing else fits.
+  const avoid = new Set(old.flatMap((m) => m.trackIds));
+  const mixes = buildThemedMixes(rows, avoid, profile.artists.map((a) => a.name));
+  if (mixes.length === 0) return 0;
+  const now = Date.now();
+  const keep = new Set(mixes.map((m) => m.key));
+  const upsert = env.DB.prepare(
+    "INSERT INTO daily_mixes (uid, family_id, daypart, title, intro, track_ids, generated_at, cover, rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(uid, daypart) DO UPDATE SET family_id = excluded.family_id, title = excluded.title, intro = excluded.intro, " +
+      "track_ids = excluded.track_ids, generated_at = excluded.generated_at, cover = excluded.cover, rank = excluded.rank",
+  );
+  const drop = env.DB.prepare("DELETE FROM daily_mixes WHERE uid = ? AND daypart = ?");
+  await env.DB.batch([
+    ...mixes.map((m) => upsert.bind(uid, familyId, m.key, m.title, m.intro, JSON.stringify(m.trackIds), now, m.cover, m.rank)),
+    ...old.filter((m) => !keep.has(m.daypart)).map((m) => drop.bind(uid, m.daypart)),
+  ]);
+  return mixes.length;
 }
 
 /**

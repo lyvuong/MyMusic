@@ -8,13 +8,17 @@ import { tasteProfile } from "./taste";
  */
 
 export const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-const CANDIDATES = 220; // songs shown to the model
+export const CANDIDATES = 300; // songs shown to the model
 const LOVED = 60;
 const DISLIKED = 25;
 const MIN_RATINGS = 3;
 
 /** `plays` is the family's plays and `myPlays` the caller's own, over 90 days; `skips` is how often the caller moved on from the song within a minute (60 days). */
-interface Row { id: string; title: string; artist: string; album: string; rating: number | null; plays?: number | null; myPlays?: number | null; skips?: number | null; fame?: number | null }
+export interface Row {
+  id: string; title: string; artist: string; album: string; rating: number | null;
+  plays?: number | null; myPlays?: number | null; skips?: number | null; fame?: number | null;
+  genre?: string | null; duration?: number | null; hasArt?: number | null;
+}
 
 /** How much a well-known song (AI judged, 0-3) adds to its score. */
 const FAME_BOOST = 0.4;
@@ -56,7 +60,7 @@ const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 const shuffle = <T,>(a: T[]) => a.map((v) => ({ v, k: Math.random() })).sort((x, y) => x.k - y.k).map((x) => x.v);
 
 /** Builds the prompt data: how the user rated artists/songs and the pool of songs the AI may pick from. */
-export function buildContext(all: Row[]) {
+export function buildContext(all: Row[], avoid?: Set<string>) {
   const rated = all.filter((t) => t.rating !== null);
   const artistStats = new Map<string, { sum: number; n: number }>();
   for (const t of rated) {
@@ -79,7 +83,10 @@ export function buildContext(all: Row[]) {
 
   // Candidates: unrated songs and loved ones. Songs by artists you rate well come first; the rest is random so the
   // AI can still surprise you.
-  const pool = all.filter((t) => (t.rating === null && (t.skips ?? 0) < DROP_AFTER_SKIPS) || (t.rating !== null && t.rating >= 4));
+  const wanted = all.filter((t) => (t.rating === null && (t.skips ?? 0) < DROP_AFTER_SKIPS) || (t.rating !== null && t.rating >= 4));
+  // Songs the last mix used stay out, so tonight's list is not yesterday's again (unless that would leave too little).
+  const fresh = avoid && avoid.size > 0 ? wanted.filter((t) => !avoid.has(t.id)) : wanted;
+  const pool = fresh.length >= CANDIDATES ? fresh : wanted;
   const skipCost = (t: Row) => {
     const own = t.skips ?? 0;
     const song = Math.min(own, SKIP_CAP) * SKIP_PENALTY * (t.rating !== null && t.rating >= 4 ? 0.5 : 1);
@@ -103,7 +110,7 @@ export function buildContext(all: Row[]) {
 export async function loadRows(env: Env, familyId: string, uid: string): Promise<Row[]> {
   const now = Date.now();
   const rows = await env.DB.prepare(
-    "SELECT t.id, t.title, t.artist, t.album, r.rating, p.n AS plays, m.n AS myPlays, s.n AS skips, sf.score AS fame FROM tracks t " +
+    "SELECT t.id, t.title, t.artist, t.album, t.genre, t.duration, (t.art_key IS NOT NULL) AS hasArt, r.rating, p.n AS plays, m.n AS myPlays, s.n AS skips, sf.score AS fame FROM tracks t " +
       "LEFT JOIN ratings r ON r.track_id = t.id AND r.uid = ? " +
       "LEFT JOIN (SELECT track_id, COUNT(*) AS n FROM plays WHERE family_id = ? AND played_at > ? GROUP BY track_id) p ON p.track_id = t.id " +
       "LEFT JOIN song_fame sf ON sf.track_id = t.id " +
@@ -115,11 +122,11 @@ export async function loadRows(env: Env, familyId: string, uid: string): Promise
 }
 
 /** `rows` lets a caller that makes several suggestions in a row (the nightly mixes) read the library only once. */
-export async function suggest(env: Env, familyId: string, uid: string, mood: string, rows?: Row[]): Promise<Suggestion> {
+export async function suggest(env: Env, familyId: string, uid: string, mood: string, rows?: Row[], avoid?: Set<string>): Promise<Suggestion> {
   if (!env.AI) throw new SuggestError(501, "AI suggestions are not configured");
   const all = rows ?? await loadRows(env, familyId, uid);
   if (all.length === 0) throw new SuggestError(400, "The library is empty");
-  const ctx = buildContext(all);
+  const ctx = buildContext(all, avoid);
   if (ctx.rated.length < MIN_RATINGS && !mood) throw new SuggestError(400, `Rate at least ${MIN_RATINGS} songs first, or describe a mood.`);
 
   const profile = [
@@ -152,7 +159,7 @@ export async function suggest(env: Env, familyId: string, uid: string, mood: str
     `LISTENER REQUEST: ${mood ? clip(mood, 200) : "Surprise me with what I would enjoy right now."}\n\n` +
     `TASTE DATA:\n${taste}\n\n` +
     `LIBRARY CANDIDATES (number|artist - title|album|flags: * = popular with the family lately, ! = a well-known song in general):\n${list}\n\n` +
-    "Task: 1) Build a playlist of 15 to 20 songs from LIBRARY CANDIDATES that fits the request and the listener's taste, ordered as a good listening flow (mix familiar loves with a few new finds). " +
+    "Task: 1) Build a playlist of 18 to 22 songs (about an hour of music) from LIBRARY CANDIDATES that fits the request and the listener's taste, ordered as a good listening flow (mix familiar loves with a few new finds). " +
     "Refer to songs only by their candidate number \"n\". Give each a short reason \"why\" (max 12 words). " +
     "2) Suggest 5 artists or albums NOT in the library that this listener would probably like, each with a short reason. Only real artists. " +
     "3) Give the playlist a short \"title\" and one friendly sentence \"intro\" about the listening experience.";
@@ -187,7 +194,7 @@ export async function suggest(env: Env, familyId: string, uid: string, mood: str
   const tracks: Suggestion["tracks"] = [];
   for (const p of Array.isArray(parsed.tracks) ? parsed.tracks : []) {
     const t = ctx.candidates[Number(p?.n) - 1];
-    if (!t || seen.has(t.id) || tracks.length >= 25) continue;
+    if (!t || seen.has(t.id) || tracks.length >= 30) continue;
     seen.add(t.id);
     tracks.push({ id: t.id, why: clip(p.why, 120) });
   }

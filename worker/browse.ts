@@ -181,7 +181,7 @@ export async function homeData(db: D1Database, familyId: string, uid: string): P
   const extra = await tracksByIds(db, familyId, wanted);
   const visible = new Set([...have, ...extra.map((t) => t.id)]);
   const keep = (ids: string[]) => ids.filter((id) => visible.has(id));
-  const mixInfo: MixInfo[] = mixes.map((m) => ({ daypart: m.daypart, title: m.title, intro: m.intro, generatedAt: m.generatedAt, trackIds: keep(m.trackIds) }));
+  const mixInfo: MixInfo[] = mixes.map((m) => ({ daypart: m.daypart, title: m.title, intro: m.intro, generatedAt: m.generatedAt, cover: m.cover, trackIds: keep(m.trackIds) }));
   return {
     mixes: mixInfo,
     recent: recentPage.tracks,

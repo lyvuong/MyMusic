@@ -15,7 +15,8 @@ import 'state.dart';
 /// Auto (and other MediaBrowser clients) show on the car screen.
 ///
 /// Browse tree (media ids): root -> foryou | albums | recent | library.
-///   foryou  -> `mix:daypart` | pop | top | redisc  (AI mix of the hour, popular, top rated, rediscover)
+///   foryou  -> `mix:daypart` | pop | top | redisc | `mix:theme-...`  (AI mix of the hour, popular, top rated,
+///              rediscover, then the themed hours: Vietnamese, pop, love songs, ...)
 ///   library -> playlists | artists | dl | all
 /// Playable items are `t:<trackId>|<context>` so that picking a song on the car screen queues the whole
 /// list it was picked from (context `dl`, `all`, `recent`, `pl:id`, `al:album`, `ar:artist`,
@@ -303,6 +304,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   MediaItem _folder(String id, String title, {String? subtitle, Track? art, bool grid = false}) => MediaItem(
         id: id,
         title: title,
+        displaySubtitle: subtitle,
         displayDescription: subtitle,
         artUri: art == null ? _logo : app.artUriFor(art) ?? _logo,
         playable: false,
@@ -366,10 +368,11 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final top = app.topRatedTracks;
     final redisc = app.rediscoverTracks;
     return [
-      _folder('mix:$dp', mix.title, subtitle: mix.subtitle, art: _artOf(mix.tracks)),
+      _folder('mix:$dp', mix.title, subtitle: mix.subtitle, art: mix.cover),
       if (pop.isNotEmpty) _folder('pop', 'Popular with the family', subtitle: '${pop.length} songs', art: _artOf(pop)),
       if (top.isNotEmpty) _folder('top', 'Your top rated', subtitle: '${top.length} songs', art: _artOf(top)),
       if (redisc.length >= 5) _folder('redisc', 'Rediscover', subtitle: 'Loved songs you have not heard lately', art: _artOf(redisc)),
+      for (final m in app.themedMixes) _folder('mix:${m.key}', m.title, subtitle: m.subtitle, art: m.cover),
     ];
   }
 
@@ -440,7 +443,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         return _library();
       case 'foryou':
         final dp = daypartOf(DateTime.now());
-        await _signedArt([...app.mixFor(dp).tracks, ...app.popularTracks, ...app.topRatedTracks].take(60).map((t) => t.id));
+        // The folder covers: each mix's chosen cover, then the first songs of the lists.
+        final covers = [for (final m in app.themedMixes) ?m.cover, ?app.mixFor(dp).cover];
+        await _signedArt([...covers, ...app.popularTracks.take(10), ...app.topRatedTracks.take(10)].map((t) => t.id));
         return _forYou();
       case 'albums':
         await _signedArt(_folderArtIds('albums'));

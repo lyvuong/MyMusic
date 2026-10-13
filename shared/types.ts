@@ -106,9 +106,14 @@ export interface ServerStatus {
   autoImport?: boolean;
 }
 
-/** One AI mix of the day, as the home page shows it (the songs are in HomeData.tracks). */
+/**
+ * One mix, as the home page shows it (the songs are in HomeData.tracks). `daypart` is "morning" | "afternoon" |
+ * "evening" | "night" for the AI mixes, or a key like "theme-vietnamese" for a themed hour of music.
+ */
 export interface MixInfo {
-  daypart: "morning" | "afternoon" | "evening" | "night";
+  daypart: string;
+  /** The song whose cover stands for the mix. */
+  cover?: string;
   title: string;
   intro: string;
   generatedAt: number;

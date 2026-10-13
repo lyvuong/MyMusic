@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildContext, DAYPARTS, DAYPART_HINT } from "./suggest";
+import { buildContext, CANDIDATES, DAYPARTS, DAYPART_HINT } from "./suggest";
 
 const row = (id: string, rating: number | null, plays: number | null = null) => ({ id, title: id, artist: `a-${id}`, album: "", rating, plays });
 
@@ -41,12 +41,12 @@ describe("skips", () => {
 
   it("ranks skipped songs below equal ones when the pool is larger than the candidate list", () => {
     const rows = [
-      ...Array.from({ length: 400 }, (_, i) => skipRow(`s${i}`, 0)),
+      ...Array.from({ length: CANDIDATES * 2 }, (_, i) => skipRow(`s${i}`, 0)),
       skipRow("skipped", 2),
     ];
     let hits = 0;
     for (let n = 0; n < 100; n++) if (buildContext(rows).candidates.some((t) => t.id === "skipped")) hits++;
-    // Without the penalty the song would be a candidate about 55% of the time (220 of 401); with it, only through the random tail (about 27%).
+    // Without the penalty the song would be a candidate about 55% of the time (half of the pool); with it, only through the random tail (about 27%).
     expect(hits).toBeLessThan(42);
   });
 

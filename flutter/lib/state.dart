@@ -196,16 +196,52 @@ class AppState extends ChangeNotifier {
   }
 
   /// The mix for [daypart]: the AI one from last night if there is one, else a local pick from ratings and popularity.
-  ({String title, String subtitle, List<Track> tracks}) mixFor(String daypart) {
+  ({String title, String subtitle, List<Track> tracks, Track? cover}) mixFor(String daypart) {
     final m = store.mixes[daypart];
     final fromServer = m == null ? <Track>[] : [for (final id in m.trackIds) ?track(id)];
+    if (m != null && m.isThemed) {
+      // A themed mix has no local stand-in: it is either on the phone or not offered.
+      return (title: m.title, subtitle: _themedNote(m, fromServer), tracks: fromServer, cover: _coverOf(m, fromServer));
+    }
     final now = DateTime.now();
     final tracks = fromServer.isNotEmpty
         ? fromServer
         : localMix(store.tracks.values, ratings: store.ratings, popular: store.popular, seed: now.year * 10000 + now.month * 100 + now.day);
     final title = '${greetingFor(daypart)} mix';
     final intro = fromServer.isNotEmpty && m!.intro.isNotEmpty ? m.intro : '${tracks.length} songs picked for you';
-    return (title: title, subtitle: intro, tracks: tracks);
+    return (title: title, subtitle: intro, tracks: tracks, cover: _coverOf(m, tracks));
+  }
+
+  /// The themed hours made last night (Vietnamese, pop, love songs, ...), in the server's order, without the thin ones.
+  List<({String key, String title, String subtitle, List<Track> tracks, Track? cover})> get themedMixes {
+    final list = store.mixes.values.where((m) => m.isThemed).toList()..sort((a, b) => a.rank.compareTo(b.rank));
+    final out = <({String key, String title, String subtitle, List<Track> tracks, Track? cover})>[];
+    for (final m in list) {
+      final x = mixFor(m.daypart);
+      if (x.tracks.length >= 5) out.add((key: m.daypart, title: x.title, subtitle: x.subtitle, tracks: x.tracks, cover: x.cover));
+    }
+    return out;
+  }
+
+  /// The cover the server chose for the mix when that song is known here and has one, else the first song with a cover.
+  Track? _coverOf(Mix? m, List<Track> tracks) {
+    final chosen = m == null || m.cover.isEmpty ? null : track(m.cover);
+    if (chosen != null && chosen.hasArt && !chosen.isLocal) return chosen;
+    for (final t in tracks) {
+      if (t.hasArt && !t.isLocal) return t;
+    }
+    return null;
+  }
+
+  /// "Romantic songs for the long drive · 61 min · Artist, Artist": a few words for the car screen.
+  String _themedNote(Mix m, List<Track> tracks) {
+    final counts = <String, int>{};
+    for (final t in tracks) {
+      if (t.artist.isNotEmpty) counts[t.artist] = (counts[t.artist] ?? 0) + 1;
+    }
+    final artists = (counts.keys.toList()..sort((a, b) => counts[b]!.compareTo(counts[a]!))).take(3).toList();
+    final who = artists.isEmpty ? '' : ' · ${artists.join(', ')}';
+    return '${m.intro.isEmpty ? '${tracks.length} songs' : m.intro}$who';
   }
 
   final Map<String, String> _artUrls = {}; // signed car-sized cover URLs by track id

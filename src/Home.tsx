@@ -40,11 +40,11 @@ export function useHome() {
   return { data, error, reload };
 }
 
-const DAYPARTS: MixInfo["daypart"][] = ["morning", "afternoon", "evening", "night"];
-const NAME: Record<MixInfo["daypart"], string> = { morning: "Morning", afternoon: "Afternoon", evening: "Evening", night: "Late night" };
+const DAYPARTS = ["morning", "afternoon", "evening", "night"];
+const NAME: Record<string, string> = { morning: "Morning", afternoon: "Afternoon", evening: "Evening", night: "Late night" };
 
 /** The same buckets as the Android app, by the hour of the device. */
-function currentDaypart(d = new Date()): MixInfo["daypart"] {
+function currentDaypart(d = new Date()): string {
   const h = d.getHours();
   return h >= 5 && h < 12 ? "morning" : h >= 12 && h < 17 ? "afternoon" : h >= 17 && h < 22 ? "evening" : "night";
 }
@@ -102,6 +102,8 @@ export function Home({ lib, isOwner, go }: { lib: Library; isOwner: boolean; go:
     const order = [now, ...DAYPARTS.filter((d) => d !== now)];
     return order.map((d) => by.get(d)).filter((m): m is MixInfo => !!m && m.trackIds.length > 0);
   }, [data, now]);
+  // The themed hours (Vietnamese, pop, love songs, ...), in the order the server ranked them.
+  const themed = useMemo(() => (data?.mixes ?? []).filter((m) => m.daypart.startsWith("theme-") && m.trackIds.length > 0), [data]);
 
   const makeMixes = async () => {
     setBusy(true);
@@ -158,6 +160,13 @@ export function Home({ lib, isOwner, go }: { lib: Library; isOwner: boolean; go:
             </p>
           ) : (
             mixes.map((m) => <SongList key={m.daypart} title={m.title || `${NAME[m.daypart]} mix`} note={m.daypart === now ? `${NAME[m.daypart]} · for now` : NAME[m.daypart]} tracks={pick(m.trackIds)} highlight={m.daypart === now} />)
+          )}
+
+          {themed.length > 0 && (
+            <>
+              <h2>Mixes for every mood</h2>
+              {themed.map((m) => <SongList key={m.daypart} title={m.title} note={m.intro} tracks={pick(m.trackIds)} />)}
+            </>
           )}
 
           {albums.length > 0 && (

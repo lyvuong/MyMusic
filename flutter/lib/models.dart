@@ -142,14 +142,27 @@ class Suggestion {
       );
 }
 
-/// A nightly AI mix for one time of day, built on the server from my ratings and what the family plays.
+/// A nightly mix built on the server: the AI one for a time of day (key morning | afternoon | evening | night), or a
+/// themed hour of music (key `theme-...`: Vietnamese, pop, love songs, ...) drawn from the whole library.
 class Mix {
-  const Mix({required this.daypart, required this.title, required this.intro, required this.trackIds, required this.generatedAt});
-  final String daypart; // morning | afternoon | evening | night
+  const Mix({
+    required this.daypart,
+    required this.title,
+    required this.intro,
+    required this.trackIds,
+    required this.generatedAt,
+    this.cover = '',
+    this.rank = 0,
+  });
+  final String daypart;
   final String title;
   final String intro;
   final List<String> trackIds;
   final int generatedAt; // epoch ms
+  final String cover; // id of the song whose cover stands for the mix, '' when not chosen
+  final int rank; // order of the themed mixes
+
+  bool get isThemed => daypart.startsWith('theme-');
 
   factory Mix.fromJson(Map<String, dynamic> j) => Mix(
         daypart: j['daypart'] as String,
@@ -157,8 +170,10 @@ class Mix {
         intro: (j['intro'] as String?) ?? '',
         trackIds: ((j['trackIds'] as List?) ?? []).cast<String>().toList(),
         generatedAt: (j['generatedAt'] as num?)?.toInt() ?? 0,
+        cover: (j['cover'] as String?) ?? '',
+        rank: (j['rank'] as num?)?.toInt() ?? 0,
       );
 
   Map<String, dynamic> toJson() =>
-      {'daypart': daypart, 'title': title, 'intro': intro, 'trackIds': trackIds, 'generatedAt': generatedAt};
+      {'daypart': daypart, 'title': title, 'intro': intro, 'trackIds': trackIds, 'generatedAt': generatedAt, 'cover': cover, 'rank': rank};
 }
