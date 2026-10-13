@@ -8,10 +8,11 @@ import 'widgets.dart';
 
 /// A fixed list of songs (an album or an artist).
 class TrackListPage extends StatelessWidget {
-  const TrackListPage({super.key, required this.title, required this.tracks, this.cover});
+  const TrackListPage({super.key, required this.title, required this.tracks, this.cover, this.subtitle});
   final String title;
   final List<Track> tracks;
   final Track? cover; // shown large above the songs
+  final String? subtitle; // a few words about the list, shown under the title
 
   @override
   Widget build(BuildContext context) {
@@ -28,8 +29,27 @@ class TrackListPage extends StatelessWidget {
               const SizedBox(width: 16),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleLarge),
-                Text('${tracks.length} songs', style: Theme.of(context).textTheme.bodyMedium),
+                Text(subtitle ?? '${tracks.length} songs', maxLines: 3, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodyMedium),
               ])),
+            ]),
+          )
+        else if (subtitle != null)
+          Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 0), child: Align(alignment: Alignment.centerLeft, child: Text(subtitle!))),
+        if (tracks.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Row(children: [
+              FilledButton.icon(onPressed: () => context.audio.playQueue(tracks, 0), icon: const Icon(Icons.play_arrow), label: const Text('Play')),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final audio = context.audio;
+                  await audio.setShuffleMode(AudioServiceShuffleMode.all);
+                  await audio.playQueue(tracks, 0);
+                },
+                icon: const Icon(Icons.shuffle),
+                label: const Text('Shuffle'),
+              ),
             ]),
           ),
         Expanded(child: ListView.builder(itemCount: tracks.length, itemBuilder: (_, i) => TrackTile(track: tracks[i], queue: tracks))),

@@ -223,6 +223,31 @@ class AppState extends ChangeNotifier {
     return out;
   }
 
+  /// The "For You" folders, exactly as the car screen lists them: the mix of the hour, popular, top rated, rediscover,
+  /// then the themed hours. The phone's home page shows the same list.
+  List<({String id, String title, String subtitle, List<Track> tracks, Track? cover})> get forYouFolders {
+    final dp = daypartOf(DateTime.now());
+    final mix = mixFor(dp);
+    final pop = popularTracks;
+    final top = topRatedTracks;
+    final redisc = rediscoverTracks;
+    Track? coverOf(List<Track> l) {
+      for (final t in l) {
+        if (t.hasArt && !t.isLocal) return t;
+      }
+      return null;
+    }
+
+    return [
+      (id: 'mix:$dp', title: mix.title, subtitle: mix.subtitle, tracks: mix.tracks, cover: mix.cover),
+      if (pop.isNotEmpty) (id: 'pop', title: 'Popular with the family', subtitle: '${pop.length} songs', tracks: pop, cover: coverOf(pop)),
+      if (top.isNotEmpty) (id: 'top', title: 'Your top rated', subtitle: '${top.length} songs', tracks: top, cover: coverOf(top)),
+      if (redisc.length >= 5)
+        (id: 'redisc', title: 'Rediscover', subtitle: 'Loved songs you have not heard lately', tracks: redisc, cover: coverOf(redisc)),
+      for (final m in themedMixes) (id: 'mix:${m.key}', title: m.title, subtitle: m.subtitle, tracks: m.tracks, cover: m.cover),
+    ];
+  }
+
   /// The cover the server chose for the mix when that song is known here and has one, else the first song with a cover.
   Track? _coverOf(Mix? m, List<Track> tracks) {
     final chosen = m == null || m.cover.isEmpty ? null : track(m.cover);

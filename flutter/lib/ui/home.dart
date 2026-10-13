@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models.dart';
 import '../scope.dart';
-import 'for_you.dart';
+import 'home_page.dart';
 import 'now_playing.dart';
 import 'settings.dart';
 import 'track_list.dart';
@@ -39,7 +39,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final pages = const [LibraryPage(), ForYouPage(), PlaylistsPage(), DownloadsPage(), SettingsPage()];
+    final pages = const [StartPage(), LibraryPage(), PlaylistsPage(), DownloadsPage(), SettingsPage()];
     return Scaffold(
       body: SafeArea(child: Column(children: [
         UpdateBanner(controller: context.app.updates),
@@ -51,8 +51,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
           selectedIndex: _tab,
           onDestinationSelected: (i) => setState(() => _tab = i),
           destinations: const [
+            NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
             NavigationDestination(icon: Icon(Icons.library_music_outlined), selectedIcon: Icon(Icons.library_music), label: 'Library'),
-            NavigationDestination(icon: Icon(Icons.auto_awesome_outlined), selectedIcon: Icon(Icons.auto_awesome), label: 'For you'),
             NavigationDestination(icon: Icon(Icons.queue_music_outlined), selectedIcon: Icon(Icons.queue_music), label: 'Playlists'),
             NavigationDestination(icon: Icon(Icons.download_for_offline_outlined), selectedIcon: Icon(Icons.download_for_offline), label: 'Offline'),
             NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),

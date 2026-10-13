@@ -361,20 +361,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         _folder('library', 'Library', subtitle: 'Playlists, artists, downloads, all songs'),
       ];
 
-  List<MediaItem> _forYou() {
-    final dp = daypartOf(DateTime.now());
-    final mix = app.mixFor(dp);
-    final pop = app.popularTracks;
-    final top = app.topRatedTracks;
-    final redisc = app.rediscoverTracks;
-    return [
-      _folder('mix:$dp', mix.title, subtitle: mix.subtitle, art: mix.cover),
-      if (pop.isNotEmpty) _folder('pop', 'Popular with the family', subtitle: '${pop.length} songs', art: _artOf(pop)),
-      if (top.isNotEmpty) _folder('top', 'Your top rated', subtitle: '${top.length} songs', art: _artOf(top)),
-      if (redisc.length >= 5) _folder('redisc', 'Rediscover', subtitle: 'Loved songs you have not heard lately', art: _artOf(redisc)),
-      for (final m in app.themedMixes) _folder('mix:${m.key}', m.title, subtitle: m.subtitle, art: m.cover),
-    ];
-  }
+  List<MediaItem> _forYou() => [
+        for (final f in app.forYouFolders) _folder(f.id, f.title, subtitle: f.subtitle, art: f.cover),
+      ];
 
   List<MediaItem> _library() => [
         _folder('playlists', 'Playlists', grid: true),
