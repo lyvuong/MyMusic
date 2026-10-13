@@ -55,8 +55,20 @@ writeFileSync(join(dist, "latest.json"), JSON.stringify(latest, null, 2));
 console.log(`Built ${Object.keys(apks).length} APKs in dist-android`);
 
 if (dryRun) process.exit(0);
-const put = (key, file, type) =>
-  run("npx", ["wrangler", "r2", "object", "put", `mymusic-releases/android/${key}`, "--file", file, "--content-type", type, "--remote"], { cwd: root });
+// Cloudflare's API occasionally answers 502/5xx; retry a few times before failing the release.
+const put = (key, file, type) => {
+  const args = ["wrangler", "r2", "object", "put", `mymusic-releases/android/${key}`, "--file", file, "--content-type", type, "--remote"];
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return run("npx", args, { cwd: root });
+    } catch (err) {
+      if (attempt >= 4) throw err;
+      const wait = 5 * 2 ** (attempt - 1);
+      console.warn(`Upload of ${key} failed (attempt ${attempt}/4), retrying in ${wait}s`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait * 1000);
+    }
+  }
+};
 for (const { file } of Object.values(apks)) put(file, join(dist, file), "application/vnd.android.package-archive");
 put("latest.json", join(dist, "latest.json"), "application/json");
 console.log(`Published ${versionName}`);
