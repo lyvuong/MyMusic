@@ -21,37 +21,44 @@ class TrackListPage extends StatelessWidget {
         IconButton(icon: const Icon(Icons.download_for_offline), tooltip: 'Download all', onPressed: () => context.app.downloadAll(tracks)),
       ]),
       body: Column(children: [
-        if (cover != null && cover!.hasArt && !cover!.isLocal)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Row(children: [
-              TrackArt(cover!, size: 120),
-              const SizedBox(width: 16),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleLarge),
-                Text(subtitle ?? '${tracks.length} songs', maxLines: 3, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodyMedium),
-              ])),
-            ]),
-          )
-        else if (subtitle != null)
-          Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 0), child: Align(alignment: Alignment.centerLeft, child: Text(subtitle!))),
-        if (tracks.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: Row(children: [
-              FilledButton.icon(onPressed: () => context.audio.playQueue(tracks, 0), icon: const Icon(Icons.play_arrow), label: const Text('Play')),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  final audio = context.audio;
-                  await audio.setShuffleMode(AudioServiceShuffleMode.all);
-                  await audio.playQueue(tracks, 0);
-                },
-                icon: const Icon(Icons.shuffle),
-                label: const Text('Shuffle'),
-              ),
-            ]),
-          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // The list's own cover, or the app's logo when no song in it has one.
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: cover != null && cover!.hasArt && !cover!.isLocal
+                  ? TrackArt(cover!, size: 120)
+                  : Image.asset('assets/logo.png', width: 120, height: 120, fit: BoxFit.cover),
+            ),
+            const SizedBox(width: 16),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleLarge),
+              Text(subtitle ?? '${tracks.length} songs', maxLines: 3, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodyMedium),
+              if (tracks.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(children: [
+                    IconButton.filled(
+                      tooltip: 'Play',
+                      icon: const Icon(Icons.play_arrow),
+                      onPressed: () => context.audio.playQueue(tracks, 0),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.outlined(
+                      tooltip: 'Shuffle',
+                      icon: const Icon(Icons.shuffle),
+                      onPressed: () async {
+                        final audio = context.audio;
+                        await audio.setShuffleMode(AudioServiceShuffleMode.all);
+                        await audio.playQueue(tracks, 0);
+                      },
+                    ),
+                  ]),
+                ),
+            ])),
+          ]),
+        ),
         Expanded(child: ListView.builder(itemCount: tracks.length, itemBuilder: (_, i) => TrackTile(track: tracks[i], queue: tracks))),
         const MiniPlayer(),
       ]),

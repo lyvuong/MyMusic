@@ -394,12 +394,6 @@ class AppState extends ChangeNotifier {
     store.ratings = server;
   }
 
-  /// A playlist and new-music ideas from my ratings, optionally for a mood. Needs a connection.
-  Future<Suggestion> suggest(String prompt) async {
-    await _flushRatings();
-    return api.suggest(prompt);
-  }
-
   // ---- Playlists --------------------------------------------------------------------------
 
   Future<Playlist> createPlaylist(String name) async {

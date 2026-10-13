@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../mixes.dart';
 import '../models.dart';
 import '../scope.dart';
-import 'for_you.dart';
 import 'home.dart' show coverOf;
 import 'track_list.dart';
 import 'widgets.dart';
@@ -33,19 +32,6 @@ class StartPage extends StatelessWidget {
                   Expanded(child: Text(greetingFor(daypartOf(DateTime.now())), style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700))),
                   if (app.syncing) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
                 ]),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: ActionChip(
-                    avatar: const Icon(Icons.auto_awesome, size: 18),
-                    label: const Text('Ask the AI for a mood'),
-                    onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ForYouPage())),
-                  ),
-                ),
               ),
             ),
             if (folders.every((f) => f.tracks.isEmpty))
@@ -143,8 +129,8 @@ class _FolderCard extends StatelessWidget {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: LayoutBuilder(
-              builder: (_, c) => cover == null
-                  ? Container(width: c.maxWidth, color: theme.colorScheme.surfaceContainerHighest, child: const Icon(Icons.music_note, size: 48))
+              builder: (_, c) => cover == null || !cover!.hasArt || cover!.isLocal
+                  ? Image.asset('assets/logo.png', width: c.maxWidth, height: c.maxWidth, fit: BoxFit.cover)
                   : TrackArt(cover!, size: c.maxWidth),
             ),
           ),
