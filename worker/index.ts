@@ -387,7 +387,7 @@ app.post("/api/vietnamese/restore", async (c) => {
 
 /**
  * Album suggestions for up to 5 songs that have none (owner only), from online catalogues and, for songs whose files are
- * on the home server, from their sound (AcoustID). Nothing is saved here.
+ * on the home server, from their sound (AcoustID). What is found is saved as open suggestions (or "none").
  */
 app.post("/api/albums/suggest", async (c) => {
   if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
@@ -400,6 +400,17 @@ app.post("/api/albums/suggest", async (c) => {
         .bind(c.get("family").familyId, ...ids).all<SongRow>()
     : { results: [] as SongRow[] };
   const { guesses, soundNote } = await suggestFor(c.env, rows.results.filter((r) => r.artist && r.title));
+  // Keep what was found, like the nightly run does, so the list is still there after a reload.
+  const now = Date.now();
+  const fam = c.get("family").familyId;
+  const looked = rows.results.filter((r) => r.artist && r.title);
+  if (looked.length) {
+    await c.env.DB.batch(looked.map((r) => {
+      const g = guesses.get(r.id) ?? [];
+      return c.env.DB.prepare("INSERT OR REPLACE INTO album_suggestions (family_id, track_id, guesses, status, checked_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(fam, r.id, JSON.stringify(g), g.length ? "open" : "none", now);
+    }));
+  }
   return c.json({ results: ids.map((id) => ({ id, guesses: guesses.get(id) ?? [] })), soundNote });
 });
 
