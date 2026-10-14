@@ -786,7 +786,7 @@ function LibraryTools({ lib, home, recheck }: { lib: LibraryState; home: ServerS
             {loadError && <span className="error"> {loadError}</span>}
           </p>
         </section>
-        <MissingAlbums tracks={tracks} loadAll={lib.loadAll} refresh={refresh} />
+        <MissingAlbums tracks={tracks} refresh={refresh} />
       </div>
       {/* Its own page; kept mounted once opened so the scan and your edits survive going back. */}
       {fixSeen && (

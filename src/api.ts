@@ -101,6 +101,7 @@ export const api = {
   /** AI: accents for up to 25 names written without them. Only answers that add accents and nothing else come back. */
   suggestAlbums: (items: { id: string; title: string; artist: string; duration: number }[]) =>
     call<{ results: { id: string; guesses: { album: string; artist: string; confidence: number; sources: string[]; title?: string }[] }[]; soundNote: string }>("POST", "/api/albums/suggest", { items }),
+  albumsMissing: () => call<{ items: { id: string; title: string; artist: string; duration: number }[] }>("GET", "/api/albums/missing"),
   albumsSaved: () =>
     call<{ items: { id: string; title: string; artist: string; duration: number; guesses: { album: string; artist: string; confidence: number; sources: string[]; title?: string }[] }[]; none: number; dismissed: number; autoApply: boolean }>("GET", "/api/albums/saved"),
   resolveAlbums: (b: { status: "applied" | "dismissed"; ids: string[] } | { status: "retry" }) => call<{ ok: boolean }>("POST", "/api/albums/resolve", b),

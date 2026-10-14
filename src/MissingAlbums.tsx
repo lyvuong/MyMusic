@@ -13,7 +13,7 @@ const asRow = (track: Song, guesses: Guess[]): Row => ({ track, guesses, pick: 0
  * lists the candidates with a confidence for each. The server also looks every night and saves what it finds here.
  * Nothing is written until the owner confirms, unless auto-apply is switched on (two sources agreeing at 95% or more).
  */
-export function MissingAlbums({ tracks, loadAll, refresh }: { tracks: Track[]; loadAll: () => Promise<void>; refresh: () => Promise<void> }) {
+export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: () => Promise<void> }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -40,15 +40,15 @@ export function MissingAlbums({ tracks, loadAll, refresh }: { tracks: Track[]; l
   const find = async () => {
     setBusy(true);
     setSoundNote("");
+    let missing: { id: string; title: string; artist: string; duration: number }[];
     try {
-      setMsg("Loading the library…");
-      await loadAll();
+      setMsg("Finding songs without an album…");
+      missing = (await api.albumsMissing()).items;
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Could not load the library");
       setBusy(false);
       return;
     }
-    const missing = tracks.filter((t) => !t.deleted && !t.album.trim() && t.artist.trim());
     const found: Row[] = [];
     try {
       for (let i = 0; i < missing.length; i += 5) {

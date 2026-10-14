@@ -403,6 +403,14 @@ app.post("/api/albums/suggest", async (c) => {
   return c.json({ results: ids.map((id) => ({ id, guesses: guesses.get(id) ?? [] })), soundNote });
 });
 
+/** Every song that has an artist and title but no album (owner only): the list the "find now" button looks up. */
+app.get("/api/albums/missing", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const r = await c.env.DB.prepare("SELECT id, title, artist, duration FROM tracks WHERE family_id = ? AND deleted = 0 AND album = '' AND artist <> '' AND title <> '' ORDER BY artist, title LIMIT 5000")
+    .bind(c.get("family").familyId).all<{ id: string; title: string; artist: string; duration: number }>();
+  return c.json({ items: r.results });
+});
+
 /** What the nightly run saved for the owner to confirm, how many songs it found nothing for, and the auto-apply switch. */
 app.get("/api/albums/saved", async (c) => {
   if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
