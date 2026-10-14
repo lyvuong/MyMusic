@@ -202,7 +202,8 @@ button.star:hover:not(:disabled) { background: none; color: var(--accent); }
 .fixv-list li.picked { background: var(--hover); }
 .fixv-names { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .fixv-names small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fixv-names input { width: 100%; border-radius: 12px; }
+.fixv-names input:not([type="radio"]):not([type="checkbox"]) { width: 100%; border-radius: 12px; }
+.fixv-names input[type="radio"], .fixv-names input[type="checkbox"] { flex: none; width: auto; }
 .fixv-reason { flex: none; max-width: 9em; text-align: right; }
 @media (max-width: 640px) { .fixv-reason { display: none; } }
 
