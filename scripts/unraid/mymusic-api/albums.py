@@ -44,7 +44,10 @@ def loop(sleep=time.sleep, run=run_once):
 def start():
     """Starts the nightly thread unless ALBUMS_HOUR is -1."""
     if not 0 <= config.ALBUMS_HOUR <= 23:
+        log("nightly albums: off (ALBUMS_HOUR=%d)" % config.ALBUMS_HOUR)
         return None
+    wait = seconds_until(config.ALBUMS_HOUR)
+    log("nightly albums: next run at %02d:00 container time (in %dh%02dm), up to %d songs" % (config.ALBUMS_HOUR, wait // 3600, wait % 3600 // 60, config.ALBUMS_MAX))
     t = threading.Thread(target=loop, daemon=True)
     t.start()
     return t
