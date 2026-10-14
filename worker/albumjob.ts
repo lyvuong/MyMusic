@@ -31,8 +31,13 @@ export async function suggestFor(env: Env, rows: SongRow[]): Promise<{ guesses: 
   return { guesses: new Map(found.map((f) => [f.id, mergeGuesses(f.guesses, sound.get(f.id) ?? [])])), soundNote };
 }
 
+/** No album: an empty one, or the placeholder the home server's Navidrome lists a song under (the sync keeps it as is). */
+export const NO_ALBUM = `LOWER(t.album) IN ('', '[unknown album]')`;
+/** An artist worth looking up: not empty and not Navidrome's placeholder. */
+export const HAS_ARTIST = `t.artist <> '' AND LOWER(t.artist) <> '[unknown artist]'`;
+
 const UNCHECKED =
-  `t.family_id = ? AND t.deleted = 0 AND t.album = '' AND t.artist <> '' AND t.title <> ''
+  `t.family_id = ? AND t.deleted = 0 AND ${NO_ALBUM} AND ${HAS_ARTIST} AND t.title <> ''
    AND NOT EXISTS (SELECT 1 FROM album_suggestions s WHERE s.family_id = t.family_id AND s.track_id = t.id)`;
 
 /** Songs with an artist and no album that were never looked at. */
@@ -101,7 +106,7 @@ export interface SavedSuggestion { id: string; title: string; artist: string; du
 export async function savedSuggestions(db: D1Database, familyId: string): Promise<SavedSuggestion[]> {
   const r = await db.prepare(
     `SELECT t.id, t.title, t.artist, t.duration, s.guesses FROM album_suggestions s JOIN tracks t ON t.id = s.track_id AND t.family_id = s.family_id
-     WHERE s.family_id = ? AND s.status = 'open' AND t.deleted = 0 AND t.album = '' ORDER BY t.artist, t.title LIMIT 500`,
+     WHERE s.family_id = ? AND s.status = 'open' AND t.deleted = 0 AND ${NO_ALBUM} ORDER BY t.artist, t.title LIMIT 500`,
   ).bind(familyId).all<{ id: string; title: string; artist: string; duration: number; guesses: string }>();
   return r.results.flatMap((x) => {
     try {

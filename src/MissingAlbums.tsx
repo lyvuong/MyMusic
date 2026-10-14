@@ -142,7 +142,7 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
     }
   };
 
-  const missingCount = tracks.filter((t) => !t.deleted && !t.album.trim()).length;
+  const missingCount = tracks.filter((t) => !t.deleted && /^(\[unknown album\])?$/i.test(t.album.trim())).length;
   return (
     <section className="tool">
       <h3>Find missing albums</h3>

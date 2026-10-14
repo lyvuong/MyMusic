@@ -18,7 +18,7 @@ import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
-import { autoApplyOn, nightlyAlbums, savedSuggestions, suggestFor, type SongRow } from "./albumjob";
+import { HAS_ARTIST, NO_ALBUM, autoApplyOn, nightlyAlbums, savedSuggestions, suggestFor, type SongRow } from "./albumjob";
 import { loadCorrections, restoreAccents, saveCorrections, VietnameseError, type AccentItem } from "./vietnamese";
 
 type Vars = { user: User; family: Membership };
@@ -406,7 +406,7 @@ app.post("/api/albums/suggest", async (c) => {
 /** Every song that has an artist and title but no album (owner only): the list the "find now" button looks up. */
 app.get("/api/albums/missing", async (c) => {
   if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
-  const r = await c.env.DB.prepare("SELECT id, title, artist, duration FROM tracks WHERE family_id = ? AND deleted = 0 AND album = '' AND artist <> '' AND title <> '' ORDER BY artist, title LIMIT 5000")
+  const r = await c.env.DB.prepare(`SELECT id, title, artist, duration FROM tracks t WHERE t.family_id = ? AND t.deleted = 0 AND ${NO_ALBUM} AND ${HAS_ARTIST} AND t.title <> '' ORDER BY artist, title LIMIT 5000`)
     .bind(c.get("family").familyId).all<{ id: string; title: string; artist: string; duration: number }>();
   return c.json({ items: r.results });
 });
