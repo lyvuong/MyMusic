@@ -1,10 +1,10 @@
 /**
- * Suggests the album of a song that has none, from online catalogues (iTunes Search and Deezer; neither needs a key).
+ * Suggests the album of a song that has none, from online catalogues (iTunes Search and Deezer need no key; Discogs needs a token).
  * Every suggestion is a real release the catalogue lists for the same artist and song title, with a confidence from
  * how well the names match, whether both catalogues agree and whether the length fits. Nothing is invented by a model.
  */
 
-export interface Hit { source: "iTunes" | "Deezer"; artist: string; track: string; album: string; seconds?: number }
+export interface Hit { source: "iTunes" | "Deezer" | "Discogs"; artist: string; track: string; album: string; seconds?: number }
 export interface AlbumGuess {
   album: string; artist: string; confidence: number; sources: string[];
   /** Set by a sound match: what the recording is really called, which may differ from a junk tag. */
@@ -83,7 +83,7 @@ export function scoreAlbums(hits: Hit[], artist: string, title: string, seconds 
   for (const e of by.values()) {
     // A perfect name match alone is 82%; a second catalogue and a fitting length are what take it higher.
     let c = e.match * 0.82;
-    if (e.sources.size > 1) c += 0.1;
+    if (e.sources.size > 1) c += 0.1 + (e.sources.size > 2 ? 0.05 : 0);
     if (e.near) c += 0.08;
     else if (e.far) c -= 0.1;
     if (COMPILATION.test(e.album)) c -= 0.15;
@@ -98,19 +98,37 @@ async function getJson<T>(url: string): Promise<T | null> {
   return res?.ok ? ((await res.json().catch(() => null)) as T | null) : null;
 }
 
-export async function findAlbums(artist: string, title: string, seconds = 0): Promise<AlbumGuess[]> {
+/**
+ * Releases Discogs lists with this song on them ("Artist - Album" titles). Discogs does not say which track matched, so
+ * the song's own title is trusted as the track name and the artist is parsed from the release title.
+ */
+async function discogs(token: string | undefined, artist: string, title: string): Promise<Hit[]> {
+  if (!token) return [];
+  const r = await getJson<{ results?: { title?: string; type?: string }[] }>(
+    `https://api.discogs.com/database/search?type=release&artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(title)}&per_page=15&token=${encodeURIComponent(token)}`,
+  );
+  return (r?.results ?? []).flatMap((x): Hit[] => {
+    const i = (x.title ?? "").indexOf(" - ");
+    if (i < 0) return [];
+    return [{ source: "Discogs", artist: x.title!.slice(0, i), track: title, album: x.title!.slice(i + 3) }];
+  });
+}
+
+export async function findAlbums(artist: string, title: string, seconds = 0, discogsToken?: string): Promise<AlbumGuess[]> {
   if (!artist || !title) return [];
-  const [it, dz] = await Promise.all([
+  const [it, dz, dc] = await Promise.all([
     getJson<{ results?: { artistName?: string; trackName?: string; collectionName?: string; trackTimeMillis?: number }[] }>(
       `https://itunes.apple.com/search?term=${encodeURIComponent(`${artist} ${title}`)}&entity=song&limit=15`,
     ),
     getJson<{ data?: { title?: string; duration?: number; artist?: { name?: string }; album?: { title?: string } }[] }>(
       `https://api.deezer.com/search?q=${encodeURIComponent(`artist:"${artist}" track:"${title}"`)}&limit=15`,
     ),
+    discogs(discogsToken, artist, title),
   ]);
   const hits: Hit[] = [
     ...(it?.results ?? []).map((r): Hit => ({ source: "iTunes", artist: r.artistName ?? "", track: r.trackName ?? "", album: r.collectionName ?? "", seconds: r.trackTimeMillis ? r.trackTimeMillis / 1000 : undefined })),
     ...(dz?.data ?? []).map((r): Hit => ({ source: "Deezer", artist: r.artist?.name ?? "", track: r.title ?? "", album: r.album?.title ?? "", seconds: r.duration })),
+    ...dc,
   ];
   return scoreAlbums(hits, artist, title, seconds);
 }

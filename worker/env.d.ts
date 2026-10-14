@@ -10,6 +10,8 @@ interface Env {
   NAS_CF_ACCESS_SECRET?: string;
   NAS_USER?: string;
   NAS_PASSWORD?: string;
+  /** Personal access token of a Discogs account (discogs.com/settings/developers); album suggestions skip Discogs without it. */
+  DISCOGS_TOKEN?: string;
   /** Shared key between the Worker and the home server API (both directions). */
   BEETS_AGENT_KEY?: string;
   /** Public URL of the home server API (a Cloudflare Tunnel hostname). Empty = Beets features disabled. */

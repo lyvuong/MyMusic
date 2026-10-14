@@ -412,7 +412,7 @@ app.post("/api/albums/suggest", async (c) => {
   const online = Promise.all(
     raw.map(async (it) => {
       const id = typeof it?.id === "string" ? it.id : "";
-      return { id, guesses: await findAlbums(cleanName(it?.artist), cleanName(it?.title), Number(it?.duration) || 0) };
+      return { id, guesses: await findAlbums(cleanName(it?.artist), cleanName(it?.title), Number(it?.duration) || 0, c.env.DISCOGS_TOKEN) };
     }),
   );
   const [found] = await Promise.all([online, soundTask]);

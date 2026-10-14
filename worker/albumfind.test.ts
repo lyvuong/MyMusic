@@ -20,6 +20,13 @@ describe("scoreAlbums", () => {
   });
 });
 
+describe("Discogs hits", () => {
+  it("count as a third catalogue", () => {
+    const r = scoreAlbums([hit("iTunes", "Help!"), hit("Deezer", "Help!"), hit("Discogs", "Help!")], "The Beatles", "Yesterday");
+    expect(r[0]!.sources).toHaveLength(3);
+  });
+});
+
 describe("sound matches", () => {
   it("turns AcoustID matches into albums, below 90%, and ignores weak ones", () => {
     const g = soundGuesses([{ score: 0.97, title: "Còn Yêu Em Mãi", artist: "Khánh Ly", albums: ["Tình Ca"] }, { score: 0.3, title: "x", artist: "y", albums: ["Nope"] }]);

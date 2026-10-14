@@ -52,6 +52,7 @@ Parts:
 | `NAS_USER`, `NAS_PASSWORD` | secrets | Navidrome login; the user must be an **admin** (the app starts library scans) |
 | `NAS_CF_ACCESS_ID`, `NAS_CF_ACCESS_SECRET` | secrets | Cloudflare Access service token, sent to Navidrome and to the home server API |
 | `HOME_API_URL` | var | The `mymusic-api` tunnel hostname (`https://mymusic-api.lv5.uk`); empty disables Organize, enrich and name editing |
+| `DISCOGS_TOKEN` | secret | Optional. A Discogs personal access token (discogs.com/settings/developers) so the missing-album finder also searches Discogs |
 | `BEETS_AGENT_KEY` | secret | Shared key between the Worker and the home server (both directions) |
 | `AI` | binding | Workers AI for suggestions (free daily allowance, no key) |
 | `DB`, `MUSIC`, `RELEASES` | bindings | D1 database and the two R2 buckets |
