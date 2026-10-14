@@ -46,7 +46,8 @@ function scan(tracks: Track[]): { fixes: Fix[]; asks: Ask[] } {
         fixes.push({ id: `${kind}:${from}`, kind, from, to: r.text, ids: ts.map((t) => t.id), reason: r.reason, on: true });
         continue;
       }
-      const context = kind !== "artist" && (vnArtists.has(first.artist) || (kind === "title" && vnAlbums.has(first.album)));
+      // Any song carrying this name may sit next to Vietnamese names, not only the first one (an Unknown album mixes artists).
+      const context = kind !== "artist" && ts.some((t) => vnArtists.has(t.artist) || (kind === "title" && vnAlbums.has(t.album)));
       if (maybeNeedsAccents(from, context, vocab)) {
         asks.push({ id: `${kind}:${from}`, kind, from, ids: ts.map((t) => t.id), artist: kind === "artist" ? undefined : first.artist, album: kind === "title" ? first.album : undefined });
       }

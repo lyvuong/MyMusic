@@ -107,7 +107,8 @@ export function maybeNeedsAccents(text: string, contextIsVietnamese = false, voc
   if (words.length === 0 || !words.some((w) => w.length >= 2)) return false;
   if (!words.every((w) => !ENGLISH.has(w) && !/[fjwz]/.test(w) && plainSyllable(w))) return false;
   if (contextIsVietnamese) return true;
-  if (words.length < 2) return false;
+  // One word with no Vietnamese artist or album around it (an Unknown album): only when the library writes that word with accents.
+  if (words.length < 2) return !!vocab && vocab.size >= 200 && words[0]!.length >= 3 && vocab.has(words[0]!);
   if (vocab && vocab.size >= 200) return words.filter((w) => vocab.has(w)).length / words.length >= 0.6;
   return true;
 }

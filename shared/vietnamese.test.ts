@@ -70,6 +70,9 @@ describe("accent candidates and the AI guard", () => {
     expect(maybeNeedsAccents("Perfect Day", true)).toBe(false); // English words stay out even with a Vietnamese artist
     expect(maybeNeedsAccents("Tinh Ca", true)).toBe(true);
     expect(maybeNeedsAccents("Blue Moon")).toBe(false);
+    const vocab = new Set(Array.from({ length: 200 }, (_, i) => `w${i}`).concat(["tinh"]));
+    expect(maybeNeedsAccents("Tinh", false, vocab)).toBe(true); // one word the library already accents
+    expect(maybeNeedsAccents("Nho", false, vocab)).toBe(false);
     expect(hasVietnamese("Hương")).toBe(true);
   });
 
