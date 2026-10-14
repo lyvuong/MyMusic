@@ -154,6 +154,18 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
     }
   };
 
+  /** Plays a song; the library page may not hold it yet, so it is fetched when it is missing. */
+  const listen = async (id: string) => {
+    if (player.current?.id === id) return player.toggle();
+    try {
+      const t = byId.get(id) ?? (await api.tracksByIds([id])).tracks[0];
+      if (t) player.play([t], 0);
+      else setMsg("Could not load that song to play it.");
+    } catch (e) {
+      setMsg(`Could not play that: ${e instanceof Error ? e.message : "failed"}`);
+    }
+  };
+
   const missingCount = tracks.filter((t) => !t.deleted && /^(\[unknown album\])?$/i.test(t.album.trim())).length;
   return (
     <section className="tool">
@@ -184,16 +196,12 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
               const g = r.pick >= 0 ? r.guesses[r.pick] : undefined;
               return (
                 <li key={r.track.id} className={r.pick >= 0 ? "picked" : ""}>
-                  {byId.get(r.track.id) && (
+                  {(
                     <button
                       className="albumfind-play"
                       aria-label={player.current?.id === r.track.id && player.playing ? `Pause ${r.track.title}` : `Play ${r.track.title}`}
                       title="Listen to this song"
-                      onClick={() => {
-                        const t = byId.get(r.track.id)!;
-                        if (player.current?.id === t.id) player.toggle();
-                        else player.play([t], 0);
-                      }}
+                      onClick={() => void listen(r.track.id)}
                     >
                       {player.current?.id === r.track.id && player.playing ? "❚❚" : "▶"}
                     </button>
