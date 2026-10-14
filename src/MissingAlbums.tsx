@@ -6,7 +6,11 @@ interface Guess { album: string; artist: string; confidence: number; sources: st
 interface Song { id: string; title: string; artist: string }
 interface Row { track: Song; guesses: Guess[]; /** index of the chosen guess, -1 for none */ pick: number; /** also take the title and artist of a sound match */ names: boolean }
 
-const asRow = (track: Song, guesses: Guess[]): Row => ({ track, guesses, pick: 0, names: false });
+/** A sound match this sure also corrects the title and artist by default. */
+const SURE = 0.95;
+const wantsNames = (g: Guess | undefined) => !!g?.title && g.confidence >= SURE;
+
+const asRow = (track: Song, guesses: Guess[]): Row => ({ track, guesses, pick: 0, names: wantsNames(guesses[0]) });
 
 /**
  * Owner tool: finds an album for songs that have none, from online catalogues and the file's audio fingerprint, and
@@ -177,7 +181,7 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
                     <small className="muted">{r.track.artist}</small>
                     {r.guesses.map((x, gi) => (
                       <label key={x.album} className="albumfind-opt">
-                        <input type="radio" name={`album-${r.track.id}`} checked={r.pick === gi} disabled={busy} onChange={() => patch({ pick: gi })} />
+                        <input type="radio" name={`album-${r.track.id}`} checked={r.pick === gi} disabled={busy} onChange={() => patch({ pick: gi, names: wantsNames(x) })} />
                         <span className="grow">{x.album}</span>
                         <small className="muted" title={`Found on ${x.sources.join(" and ")}`}>{Math.round(x.confidence * 100)}%</small>
                       </label>
