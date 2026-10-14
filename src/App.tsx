@@ -7,6 +7,7 @@ import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } fro
 import { CoverPick } from "./CoverPick";
 import { EditDialog } from "./EditDialog";
 import { FixVietnamese } from "./FixVietnamese";
+import { MissingAlbums } from "./MissingAlbums";
 import { Home, useHome, type Jump } from "./Home";
 import { auth, firebaseConfigured, signInWithGoogle, signOut } from "./firebase";
 import { PlayerBar, PlayerProvider, usePlayer } from "./player";
@@ -785,6 +786,7 @@ function LibraryTools({ lib, home, recheck }: { lib: LibraryState; home: ServerS
             {loadError && <span className="error"> {loadError}</span>}
           </p>
         </section>
+        <MissingAlbums tracks={tracks} loadAll={lib.loadAll} refresh={refresh} />
       </div>
       {/* Its own page; kept mounted once opened so the scan and your edits survive going back. */}
       {fixSeen && (

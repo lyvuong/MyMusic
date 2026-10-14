@@ -99,6 +99,8 @@ export const api = {
   editTitles: (edits: { id: string; title: string }[]) =>
     call<{ updated: number; skipped: number; ok: boolean; filesUpdated: boolean; warning: string }>("POST", "/api/library/titles", { edits }),
   /** AI: accents for up to 25 names written without them. Only answers that add accents and nothing else come back. */
+  suggestAlbums: (items: { id: string; title: string; artist: string; duration: number }[]) =>
+    call<{ results: { id: string; guesses: { album: string; artist: string; confidence: number; sources: string[] }[] }[] }>("POST", "/api/albums/suggest", { items }),
   restoreVietnamese: (items: { key: string; text: string; kind?: "title" | "album" | "artist"; artist?: string; album?: string; hints?: string[]; samples?: string[] }[]) =>
     call<{ results: { key: string; text: string }[] }>("POST", "/api/vietnamese/restore", { items }),
   /** What the owner corrected the AI to before (family-wide); from = to means "leave this name alone". */

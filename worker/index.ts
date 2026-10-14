@@ -18,6 +18,7 @@ import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
+import { findAlbums } from "./albumfind";
 import { loadCorrections, restoreAccents, saveCorrections, VietnameseError, type AccentItem } from "./vietnamese";
 
 type Vars = { user: User; family: Membership };
@@ -382,6 +383,22 @@ app.post("/api/vietnamese/restore", async (c) => {
     if (e instanceof VietnameseError) return c.json({ error: e.message }, e.status);
     throw e;
   }
+});
+
+/** Album suggestions for up to 10 songs that have none, from online catalogues (owner only). Nothing is saved here. */
+app.post("/api/albums/suggest", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const b = await c.req.json<{ items?: unknown }>().catch(() => null);
+  const raw = Array.isArray(b?.items) ? (b.items as Record<string, unknown>[]) : null;
+  if (!raw || raw.length === 0 || raw.length > 10) return c.json({ error: "send 1 to 10 songs" }, 400);
+  const results = await Promise.all(
+    raw.map(async (it) => {
+      const id = typeof it?.id === "string" ? it.id : "";
+      const guesses = await findAlbums(cleanName(it?.artist), cleanName(it?.title), Number(it?.duration) || 0);
+      return { id, guesses };
+    }),
+  );
+  return c.json({ results });
 });
 
 /** The family's saved corrections (what the owner changed the AI's suggestions to), so the page can skip or hide names. */

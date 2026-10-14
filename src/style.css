@@ -220,6 +220,8 @@ button.star:hover:not(:disabled) { background: none; color: var(--accent); }
 fieldset { border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; }
 .empty { text-align: center; padding: 48px 16px; }
 .fixv-bar input[type="search"] { flex: 1 1 200px; min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; }
+.albumfind-opt { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.albumfind-opt .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fixv-asks { margin-top: 12px; }
 .fixv-list li.fresh { outline: 2px solid var(--accent); outline-offset: -2px; }
 .job { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
