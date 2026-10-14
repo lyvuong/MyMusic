@@ -48,6 +48,25 @@ class Jobs(unittest.TestCase):
         self.assertEqual(sorted(JOBS), ["enrich", "import", "youtube"])
 
 
+class NightlyAlbums(unittest.TestCase):
+    def test_stops_when_nothing_is_left(self):
+        from albums import run_once
+        answers = [{"checked": 5, "saved": 3, "applied": 1, "remaining": 7}, {"checked": 2, "saved": 0, "applied": 0, "remaining": 0}]
+        calls = []
+        r = run_once(post=lambda path, q=None, timeout=0: (calls.append(path), answers.pop(0))[1], cap=100)
+        self.assertEqual(r, {"checked": 7, "saved": 3, "applied": 1})
+        self.assertEqual(len(calls), 2)
+
+    def test_stops_at_the_nightly_cap(self):
+        from albums import run_once
+        r = run_once(post=lambda path, q=None, timeout=0: {"checked": 5, "saved": 1, "applied": 0, "remaining": 99}, cap=10)
+        self.assertEqual(r["checked"], 10)
+
+    def test_unreachable_worker(self):
+        from albums import run_once
+        self.assertIsNone(run_once(post=lambda path, q=None, timeout=0: None, cap=10))
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -20,7 +20,7 @@ in the README for the compose entry.
 
 The code is split by job: config (settings), locks (library lock + one job at a time), reporting (back to the Worker),
 jobs/ (import, enrich, youtube), watcher (imports by itself when files arrive), mixes (asks the Worker for the
-nightly AI mixes), edit (name and cover edits),
+nightly AI mixes), albums (asks it to look for missing albums), edit (name and cover edits),
 http_handler (routing). Copy the whole folder to the server.
 """
 import os
@@ -28,6 +28,7 @@ import threading
 from http.server import ThreadingHTTPServer
 
 import config
+import albums
 import mixes
 import reporting
 import watcher
@@ -49,6 +50,7 @@ def main():
     threading.Thread(target=reporting.worker_post, args=("/api/beets/agent/reset",), kwargs={"tries": 3}, daemon=True).start()
     watcher.start()
     mixes.start()
+    albums.start()
     ThreadingHTTPServer(("0.0.0.0", config.PORT), Handler).serve_forever()
 
 

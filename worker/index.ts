@@ -8,7 +8,7 @@ import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
-import { HomeError, homeConfigured, homeCover, homeEdit, homeFingerprint, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
+import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
 import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { recordPlays, recordSkips, popular } from "./plays";
@@ -18,7 +18,7 @@ import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
-import { findAlbums, mergeGuesses, soundGuesses, type AlbumGuess } from "./albumfind";
+import { autoApplyOn, nightlyAlbums, savedSuggestions, suggestFor, type SongRow } from "./albumjob";
 import { loadCorrections, restoreAccents, saveCorrections, VietnameseError, type AccentItem } from "./vietnamese";
 
 type Vars = { user: User; family: Membership };
@@ -76,7 +76,7 @@ const needFamily = async (c: import("hono").Context<{ Bindings: Env; Variables: 
   c.set("family", m);
   await next();
 };
-for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/family/taste", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/plays", "/api/popular", "/api/mixes", "/api/mixes/*", "/api/art-urls", "/api/cast/*", "/api/vietnamese/*", "/api/home", "/api/browse", "/api/group", "/api/names"]) {
+for (const p of ["/api/library", "/api/playlists/*", "/api/upload", "/api/library/*", "/api/tracks/*", "/api/stream/*", "/api/art/*", "/api/artist-art/*", "/api/nas/*", "/api/beets/run", "/api/beets/enrich", "/api/beets/runs", "/api/beets/youtube", "/api/beets/youtube/*", "/api/server/status", "/api/family/invites", "/api/family/taste", "/api/ratings", "/api/ratings/*", "/api/suggest", "/api/plays", "/api/popular", "/api/mixes", "/api/mixes/*", "/api/art-urls", "/api/cast/*", "/api/vietnamese/*", "/api/albums/*", "/api/home", "/api/browse", "/api/group", "/api/names"]) {
   app.use(p, needFamily);
 }
 
@@ -396,27 +396,63 @@ app.post("/api/albums/suggest", async (c) => {
   if (!raw || raw.length === 0 || raw.length > 5) return c.json({ error: "send 1 to 5 songs" }, 400);
   const ids = raw.map((it) => (typeof it?.id === "string" ? it.id : "")).filter(Boolean);
   const rows = ids.length
-    ? await c.env.DB.prepare(`SELECT id, source, title, artist, album, track_no FROM tracks WHERE family_id = ? AND deleted = 0 AND id IN (${ids.map(() => "?").join(",")})`)
-        .bind(c.get("family").familyId, ...ids).all<{ id: string; source: string; title: string; artist: string; album: string; track_no: number }>()
-    : { results: [] };
-  const byId = new Map(rows.results.map((r) => [r.id, r]));
-  // Files on the home server can be fingerprinted; a failure only means the sound lookup is skipped.
-  const nas = ids.filter((id) => byId.get(id)?.source === "nas");
-  let sound = new Map<string, AlbumGuess[]>();
-  let soundNote = "";
-  const soundTask = nas.length
-    ? homeFingerprint(c.env, nas.map((id) => { const r = byId.get(id)!; return { title: r.title, artist: r.artist, album: r.album, trackNo: r.track_no }; }))
-        .then((r) => { sound = new Map(nas.map((id, i) => [id, soundGuesses(r.results[i]?.matches ?? [])])); })
-        .catch((e) => { soundNote = e instanceof Error ? e.message : "The sound lookup failed"; })
-    : Promise.resolve();
-  const online = Promise.all(
-    raw.map(async (it) => {
-      const id = typeof it?.id === "string" ? it.id : "";
-      return { id, guesses: await findAlbums(cleanName(it?.artist), cleanName(it?.title), Number(it?.duration) || 0, c.env.DISCOGS_TOKEN) };
-    }),
-  );
-  const [found] = await Promise.all([online, soundTask]);
-  return c.json({ results: found.map((r) => ({ id: r.id, guesses: mergeGuesses(r.guesses, sound.get(r.id) ?? []) })), soundNote });
+    ? await c.env.DB.prepare(`SELECT id, source, title, artist, album, track_no, duration FROM tracks WHERE family_id = ? AND deleted = 0 AND id IN (${ids.map(() => "?").join(",")})`)
+        .bind(c.get("family").familyId, ...ids).all<SongRow>()
+    : { results: [] as SongRow[] };
+  const { guesses, soundNote } = await suggestFor(c.env, rows.results.filter((r) => r.artist && r.title));
+  return c.json({ results: ids.map((id) => ({ id, guesses: guesses.get(id) ?? [] })), soundNote });
+});
+
+/** What the nightly run saved for the owner to confirm, how many songs it found nothing for, and the auto-apply switch. */
+app.get("/api/albums/saved", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const fam = c.get("family").familyId;
+  const counts = await c.env.DB.prepare("SELECT status, COUNT(*) AS n FROM album_suggestions WHERE family_id = ? GROUP BY status")
+    .bind(fam).all<{ status: string; n: number }>();
+  const n = (s: string) => counts.results.find((r) => r.status === s)?.n ?? 0;
+  return c.json({ items: await savedSuggestions(c.env.DB, fam), none: n("none"), dismissed: n("dismissed"), autoApply: await autoApplyOn(c.env.DB, fam) });
+});
+
+/**
+ * The owner dealt with songs: "applied" forgets their suggestions (they have an album now), "dismissed" keeps them out of
+ * the nightly run, "retry" forgets the songs nothing was found for (and the dismissed ones) so they are looked up again.
+ */
+app.post("/api/albums/resolve", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const b = await c.req.json<{ status?: unknown; ids?: unknown }>().catch(() => null);
+  const fam = c.get("family").familyId;
+  if (b?.status === "retry") {
+    await c.env.DB.prepare("DELETE FROM album_suggestions WHERE family_id = ? AND status IN ('none', 'dismissed')").bind(fam).run();
+    return c.json({ ok: true });
+  }
+  const ids = Array.isArray(b?.ids) ? (b.ids as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 200) : [];
+  if ((b?.status !== "applied" && b?.status !== "dismissed") || ids.length === 0) return c.json({ error: "bad request" }, 400);
+  const marks = ids.map(() => "?").join(",");
+  await c.env.DB.prepare(b.status === "applied"
+    ? `DELETE FROM album_suggestions WHERE family_id = ? AND track_id IN (${marks})`
+    : `UPDATE album_suggestions SET status = 'dismissed' WHERE family_id = ? AND track_id IN (${marks})`).bind(fam, ...ids).run();
+  return c.json({ ok: true });
+});
+
+/** Turns the nightly auto-apply on or off for the family. */
+app.post("/api/albums/settings", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const b = await c.req.json<{ autoApply?: unknown }>().catch(() => null);
+  if (typeof b?.autoApply !== "boolean") return c.json({ error: "bad request" }, 400);
+  await c.env.DB.prepare("INSERT INTO album_settings (family_id, auto_apply) VALUES (?, ?) ON CONFLICT(family_id) DO UPDATE SET auto_apply = excluded.auto_apply")
+    .bind(c.get("family").familyId, b.autoApply ? 1 : 0).run();
+  return c.json({ autoApply: b.autoApply });
+});
+
+/**
+ * The home server's nightly job: looks up a few songs without an album (?limit=, at most 5) and saves the suggestions.
+ * Answers {checked, saved, applied, remaining}; it repeats until nothing is left or its nightly cap is reached.
+ */
+app.post("/api/beets/agent/albums", async (c) => {
+  if (!agentKeyOk(c.env, c.req.header("X-Agent-Key"))) return c.json({ error: "unauthorized" }, 401);
+  const r = await nightlyAlbums(c.env, Number(c.req.query().limit ?? 5));
+  if (r.filesWritten > 0) await afterFileEdit(c.env, c.executionCtx, { written: r.filesWritten, skipped: [] });
+  return c.json(r);
 });
 
 /** The family's saved corrections (what the owner changed the AI's suggestions to), so the page can skip or hide names. */

@@ -24,4 +24,6 @@ RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Nightly AI mixes: the hour (0-23, container time) the Worker is asked to build every member's day-part mixes; -1 = never.
 MIXES_HOUR = int(os.environ.get("MIXES_HOUR", "3"))
+ALBUMS_HOUR = int(os.environ.get("ALBUMS_HOUR", "4"))  # hour (container time) the missing-album finder runs; -1 = never
+ALBUMS_MAX = max(5, int(os.environ.get("ALBUMS_MAX", "100")))  # songs looked at per night (each one asks several catalogues)
 MIXES_BATCH = 2  # members per request; each takes four AI calls, and one request must stay short
