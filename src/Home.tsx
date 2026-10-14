@@ -153,18 +153,13 @@ export function Home({ lib, isOwner, go }: { lib: Library; isOwner: boolean; go:
         <>
           {msg && <p className="muted" role="status">{busy && <span className="spinner" />}{msg}</p>}
           <h2>Made for you</h2>
+          <p>
+            <button className="primary" disabled={busy} onClick={() => void makeMixes()}>↻ Regenerate my mixes</button>
+          </p>
           {mixes.length === 0 ? (
-            <p className="muted">
-              Your mixes are made overnight from your ratings and what the family plays.{" "}
-              <button className="link" disabled={busy} onClick={() => void makeMixes()}>Make my mixes now</button>
-            </p>
+            <p className="muted">Your mixes are made overnight from your ratings and what the family plays.</p>
           ) : (
             mixes.map((m) => <SongList key={m.daypart} title={m.title || `${NAME[m.daypart]} mix`} note={m.daypart === now ? `${NAME[m.daypart]} · for now` : NAME[m.daypart]} tracks={pick(m.trackIds)} highlight={m.daypart === now} />)
-          )}
-          {mixes.length > 0 && (
-            <p className="muted">
-              <button className="link" disabled={busy} onClick={() => void makeMixes()}>Make my mixes again now</button>
-            </p>
           )}
 
           {themed.length > 0 && (
