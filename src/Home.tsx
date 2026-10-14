@@ -161,6 +161,11 @@ export function Home({ lib, isOwner, go }: { lib: Library; isOwner: boolean; go:
           ) : (
             mixes.map((m) => <SongList key={m.daypart} title={m.title || `${NAME[m.daypart]} mix`} note={m.daypart === now ? `${NAME[m.daypart]} · for now` : NAME[m.daypart]} tracks={pick(m.trackIds)} highlight={m.daypart === now} />)
           )}
+          {mixes.length > 0 && (
+            <p className="muted">
+              <button className="link" disabled={busy} onClick={() => void makeMixes()}>Make my mixes again now</button>
+            </p>
+          )}
 
           {themed.length > 0 && (
             <>
