@@ -5,7 +5,46 @@
  */
 
 export interface Hit { source: "iTunes" | "Deezer"; artist: string; track: string; album: string; seconds?: number }
-export interface AlbumGuess { album: string; artist: string; confidence: number; sources: string[] }
+export interface AlbumGuess {
+  album: string; artist: string; confidence: number; sources: string[];
+  /** Set by a sound match: what the recording is really called, which may differ from a junk tag. */
+  title?: string;
+}
+
+/** What the home server's fingerprint lookup found for one song (AcoustID: recordings and the albums they are on). */
+export interface SoundMatch { score: number; title: string; artist: string; albums: string[] }
+
+/** Albums from a sound match. Confidence is AcoustID's own score, kept below 90% since it is a lookup, not a certainty. */
+export function soundGuesses(matches: SoundMatch[]): AlbumGuess[] {
+  const by = new Map<string, AlbumGuess>();
+  for (const m of matches) {
+    if (!(m.score >= 0.5)) continue;
+    for (const album of m.albums) {
+      const key = norm(album);
+      if (!key) continue;
+      const confidence = Math.round(Math.min(0.9, m.score * 0.9) * 100) / 100;
+      const old = by.get(key);
+      if (!old || confidence > old.confidence) by.set(key, { album, artist: m.artist, title: m.title, confidence, sources: ["AcoustID"] });
+    }
+  }
+  return [...by.values()];
+}
+
+/** The same album from the sound and from the catalogues is more certain than either alone. */
+export function mergeGuesses(online: AlbumGuess[], sound: AlbumGuess[]): AlbumGuess[] {
+  const by = new Map<string, AlbumGuess>();
+  for (const g of [...online, ...sound]) {
+    const key = norm(g.album);
+    const old = by.get(key);
+    if (!old) by.set(key, { ...g });
+    else {
+      old.confidence = Math.min(0.98, Math.round((Math.max(old.confidence, g.confidence) + 0.08) * 100) / 100);
+      old.sources = [...new Set([...old.sources, ...g.sources])];
+      old.title = old.title ?? g.title;
+    }
+  }
+  return [...by.values()].sort((x, y) => y.confidence - x.confidence).slice(0, 3);
+}
 
 const norm = (s: string) =>
   s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/\(.*?\)|\[.*?\]/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();

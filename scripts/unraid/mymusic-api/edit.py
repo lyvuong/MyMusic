@@ -246,6 +246,48 @@ print("RESULT " + json.dumps(out))
 """
 
 
+# Identifies songs by their sound: Chromaprint (fpcalc, in the beets image) + AcoustID, which answers with the MusicBrainz
+# recordings and the release groups (albums) they appear on. Read-only: nothing is written to files or the library.
+FINGERPRINT_PY = COMMON_PY + r'''
+import acoustid
+songs = json.load(sys.stdin)
+try:
+    from beetsplug import chroma
+    key = getattr(chroma, "API_KEY", None)
+except Exception:
+    key = None
+key = os.environ.get("ACOUSTID_KEY") or key or "1vOwZtEn"
+items = list(lib.items())
+out = []
+for m in songs:
+    found = [it for it in items if same(it.title, m["title"]) and same(it.artist, m["artist"]) and same(it.album, m["album"])]
+    if len(found) > 1 and m.get("trackNo"):
+        found = [it for it in found if it.track == m["trackNo"]] or found
+    row = {"matches": [], "why": ""}
+    if len(found) != 1:
+        row["why"] = "the song was not found in the Beets library" if not found else "several songs share these names"
+    else:
+        path = resolve(found[0].path)
+        if path is None:
+            row["why"] = "the file is missing from the disk"
+        else:
+            try:
+                duration, fp = acoustid.fingerprint_file(os.fsdecode(path))
+                res = acoustid.lookup(key, fp, duration, meta="recordings releasegroups")
+                for r in res.get("results", []):
+                    for rec in r.get("recordings", []):
+                        artists = " & ".join(a.get("name", "") for a in rec.get("artists", []) if a.get("name"))
+                        groups = [g.get("title", "") for g in rec.get("releasegroups", []) if g.get("title")]
+                        row["matches"].append({"score": r.get("score", 0), "title": rec.get("title", ""), "artist": artists, "albums": groups[:5]})
+                if not row["matches"]:
+                    row["why"] = "AcoustID does not know this recording"
+            except Exception as e:
+                row["why"] = "fingerprint failed: %s" % e
+    out.append(row)
+print("RESULT " + json.dumps(out))
+'''
+
+
 def run_in_beets(script, payload, timeout):
     """Runs a script with the interpreter of the beets container, the payload as JSON on stdin. Takes no lock: the caller
     holds the library lock when it needs one. Returns the CompletedProcess."""
@@ -288,3 +330,17 @@ def do_edit(payload, script=None, what="edit"):
     if p.returncode != 0 or result.get("failed"):
         return 500, {"error": "Could not write %d %s: %s" % (result.get("failed", 0), "folder(s)" if script is COVER_PY else "file(s)", text.strip()[-400:])}
     return 200, {"written": result.get("written", 0), "embedded": result.get("embedded", 0), "shadowed": result.get("shadowed", []), "skipped": result.get("skipped", []), "missing": result.get("missing", []), "log": text[-2000:]}
+
+
+def do_fingerprint(songs):
+    """Fingerprints up to 5 songs (matched by names, like edits) and looks them up on AcoustID. Returns (status, body)."""
+    try:
+        p = run_in_beets(FINGERPRINT_PY, songs, config.EDIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return 504, {"error": "The fingerprint lookup took too long."}
+    except OSError as e:
+        return 503, {"error": "Cannot run docker: %s" % e}
+    result = result_line(p.stdout + p.stderr)
+    if not isinstance(result, list):
+        return 500, {"error": "The fingerprint lookup failed: " + ((p.stdout + p.stderr).strip().splitlines() or ["no output"])[-1][:300]}
+    return 200, {"results": result}

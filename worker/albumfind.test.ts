@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreAlbums, type Hit } from "./albumfind";
+import { mergeGuesses, scoreAlbums, soundGuesses, type Hit } from "./albumfind";
 
 const hit = (source: Hit["source"], album: string, track = "Yesterday", artist = "The Beatles", seconds?: number): Hit => ({ source, artist, track, album, seconds });
 
@@ -17,5 +17,18 @@ describe("scoreAlbums", () => {
     const r = scoreAlbums([hit("iTunes", "Greatest Hits", "Còn Yêu Em Mãi", "Khánh Ly"), hit("iTunes", "Tình Ca", "Còn Yêu Em Mãi", "Khánh Ly")], "Khanh Ly", "Con Yeu Em Mai");
     expect(r[0]!.album).toBe("Tình Ca");
     expect(r[0]!.confidence).toBe(0.82);
+  });
+});
+
+describe("sound matches", () => {
+  it("turns AcoustID matches into albums, below 90%, and ignores weak ones", () => {
+    const g = soundGuesses([{ score: 0.97, title: "Còn Yêu Em Mãi", artist: "Khánh Ly", albums: ["Tình Ca"] }, { score: 0.3, title: "x", artist: "y", albums: ["Nope"] }]);
+    expect(g).toEqual([{ album: "Tình Ca", artist: "Khánh Ly", title: "Còn Yêu Em Mãi", confidence: 0.87, sources: ["AcoustID"] }]);
+  });
+  it("is more certain when the catalogues name the same album", () => {
+    const m = mergeGuesses([{ album: "Tinh Ca", artist: "Khanh Ly", confidence: 0.82, sources: ["iTunes"] }], [{ album: "Tình Ca", artist: "Khánh Ly", title: "T", confidence: 0.87, sources: ["AcoustID"] }]);
+    expect(m).toHaveLength(1);
+    expect(m[0]!.confidence).toBe(0.95);
+    expect(m[0]!.sources).toEqual(["iTunes", "AcoustID"]);
   });
 });

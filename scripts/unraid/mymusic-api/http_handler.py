@@ -6,7 +6,7 @@ import subprocess
 from http.server import BaseHTTPRequestHandler
 
 import config
-from edit import COVER_PY, do_edit
+from edit import COVER_PY, do_edit, do_fingerprint
 from jobs import JOBS
 from jobs.youtube import clean_tag, clean_url, yt_info
 from jobs.importer import count_inbox
@@ -83,6 +83,13 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(ops, list) or not ops or len(ops) > 500 or not all(isinstance(o, dict) for o in ops):
                 return self.send(400, {"error": "ops must be a list of 1-500 edits"})
             return self.send(*do_edit(ops))
+        if self.path == "/fingerprint":
+            songs = b.get("songs")
+            ok = isinstance(songs, list) and 1 <= len(songs) <= 5 and all(
+                isinstance(s, dict) and all(isinstance(s.get(k), str) for k in ("title", "artist", "album")) for s in songs)
+            if not ok:
+                return self.send(400, {"error": "songs must be a list of 1-5 songs with title, artist and album"})
+            return self.send(*do_fingerprint(songs))
         if self.path == "/cover":
             album, image = b.get("album"), b.get("image")
             if not isinstance(album, str) or not album.strip() or not isinstance(image, str) or not image:

@@ -87,6 +87,11 @@ export function homeCover(env: Env, album: string, image: string): Promise<EditR
   return call<EditResult>(env, "POST", "/cover", { album, image }, 95000);
 }
 
+/** Identifies up to 5 songs by their sound (Chromaprint + AcoustID) on the home server. One entry per song, in order. */
+export function homeFingerprint(env: Env, songs: { title: string; artist: string; album: string; trackNo: number }[]) {
+  return call<{ results: { matches: { score: number; title: string; artist: string; albums: string[] }[]; why: string }[] }>(env, "POST", "/fingerprint", { songs }, 95000);
+}
+
 /** Starts a long job (an import, an enrich or a YouTube download); the server reports progress and the result to the Worker by run id. */
 export async function homeStartJob(env: Env, id: string, kind: "import" | "enrich" | "youtube", extra: Record<string, string> = {}): Promise<void> {
   await call<{ id: string }>(env, "POST", "/jobs", { ...extra, id, kind }, 15000);

@@ -8,7 +8,7 @@ import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
-import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
+import { HomeError, homeConfigured, homeCover, homeEdit, homeFingerprint, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
 import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { recordPlays, recordSkips, popular } from "./plays";
@@ -18,7 +18,7 @@ import { buildMixesFor, buildMixSlice, getMixes } from "./mixes";
 import { carArt } from "./carart";
 import { suggest, SuggestError } from "./suggest";
 import { ingest } from "./upload";
-import { findAlbums } from "./albumfind";
+import { findAlbums, mergeGuesses, soundGuesses, type AlbumGuess } from "./albumfind";
 import { loadCorrections, restoreAccents, saveCorrections, VietnameseError, type AccentItem } from "./vietnamese";
 
 type Vars = { user: User; family: Membership };
@@ -385,20 +385,38 @@ app.post("/api/vietnamese/restore", async (c) => {
   }
 });
 
-/** Album suggestions for up to 10 songs that have none, from online catalogues (owner only). Nothing is saved here. */
+/**
+ * Album suggestions for up to 5 songs that have none (owner only), from online catalogues and, for songs whose files are
+ * on the home server, from their sound (AcoustID). Nothing is saved here.
+ */
 app.post("/api/albums/suggest", async (c) => {
   if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
   const b = await c.req.json<{ items?: unknown }>().catch(() => null);
   const raw = Array.isArray(b?.items) ? (b.items as Record<string, unknown>[]) : null;
-  if (!raw || raw.length === 0 || raw.length > 10) return c.json({ error: "send 1 to 10 songs" }, 400);
-  const results = await Promise.all(
+  if (!raw || raw.length === 0 || raw.length > 5) return c.json({ error: "send 1 to 5 songs" }, 400);
+  const ids = raw.map((it) => (typeof it?.id === "string" ? it.id : "")).filter(Boolean);
+  const rows = ids.length
+    ? await c.env.DB.prepare(`SELECT id, source, title, artist, album, track_no FROM tracks WHERE family_id = ? AND deleted = 0 AND id IN (${ids.map(() => "?").join(",")})`)
+        .bind(c.get("family").familyId, ...ids).all<{ id: string; source: string; title: string; artist: string; album: string; track_no: number }>()
+    : { results: [] };
+  const byId = new Map(rows.results.map((r) => [r.id, r]));
+  // Files on the home server can be fingerprinted; a failure only means the sound lookup is skipped.
+  const nas = ids.filter((id) => byId.get(id)?.source === "nas");
+  let sound = new Map<string, AlbumGuess[]>();
+  let soundNote = "";
+  const soundTask = nas.length
+    ? homeFingerprint(c.env, nas.map((id) => { const r = byId.get(id)!; return { title: r.title, artist: r.artist, album: r.album, trackNo: r.track_no }; }))
+        .then((r) => { sound = new Map(nas.map((id, i) => [id, soundGuesses(r.results[i]?.matches ?? [])])); })
+        .catch((e) => { soundNote = e instanceof Error ? e.message : "The sound lookup failed"; })
+    : Promise.resolve();
+  const online = Promise.all(
     raw.map(async (it) => {
       const id = typeof it?.id === "string" ? it.id : "";
-      const guesses = await findAlbums(cleanName(it?.artist), cleanName(it?.title), Number(it?.duration) || 0);
-      return { id, guesses };
+      return { id, guesses: await findAlbums(cleanName(it?.artist), cleanName(it?.title), Number(it?.duration) || 0) };
     }),
   );
-  return c.json({ results });
+  const [found] = await Promise.all([online, soundTask]);
+  return c.json({ results: found.map((r) => ({ id: r.id, guesses: mergeGuesses(r.guesses, sound.get(r.id) ?? []) })), soundNote });
 });
 
 /** The family's saved corrections (what the owner changed the AI's suggestions to), so the page can skip or hide names. */
