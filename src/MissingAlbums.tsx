@@ -4,13 +4,18 @@ import { api } from "./api";
 
 interface Guess { album: string; artist: string; confidence: number; sources: string[]; title?: string }
 interface Song { id: string; title: string; artist: string }
-interface Row { track: Song; guesses: Guess[]; /** index of the chosen guess, -1 for none */ pick: number; /** also take the title and artist of a sound match */ names: boolean }
+interface Row { track: Song; guesses: Guess[]; /** index of the chosen guess, -1 for none */ pick: number; /** also take the guess's title / artist name */ retitle: boolean; reartist: boolean }
 
-/** A sound match this sure also corrects the title and artist by default. */
+/** A guess this sure also corrects the title and artist by default, when they differ. */
 const SURE = 0.95;
-const wantsNames = (g: Guess | undefined) => !!g?.title && g.confidence >= SURE;
+const titleDiffers = (g: Guess | undefined, t: Song) => !!g?.title && g.title !== t.title;
+const artistDiffers = (g: Guess | undefined, t: Song) => !!g?.artist && g.artist !== t.artist;
+const names = (g: Guess | undefined, t: Song) => ({
+  retitle: titleDiffers(g, t) && g!.confidence >= SURE,
+  reartist: artistDiffers(g, t) && g!.confidence >= SURE,
+});
 
-const asRow = (track: Song, guesses: Guess[]): Row => ({ track, guesses, pick: 0, names: wantsNames(guesses[0]) });
+const asRow = (track: Song, guesses: Guess[]): Row => ({ track, guesses, pick: 0, ...names(guesses[0], track) });
 
 /**
  * Owner tool: finds an album for songs that have none, from online catalogues and the file's audio fingerprint, and
@@ -91,7 +96,7 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
       setMsg(`Saving albums… ${done.size + 1} of ${chosen.length}`);
       try {
         const g = r.guesses[r.pick]!;
-        await api.editTrack(r.track.id, { album: g.album, ...(r.names && g.title ? { title: g.title, artist: g.artist } : {}) });
+        await api.editTrack(r.track.id, { album: g.album, ...(r.retitle && g.title ? { title: g.title } : {}), ...(r.reartist && g.artist ? { artist: g.artist } : {}) });
         done.add(r.track.id);
       } catch (e) {
         failed.push(`${r.track.title}: ${e instanceof Error ? e.message : "failed"}`);
@@ -181,15 +186,21 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
                     <small className="muted">{r.track.artist}</small>
                     {r.guesses.map((x, gi) => (
                       <label key={x.album} className="albumfind-opt">
-                        <input type="radio" name={`album-${r.track.id}`} checked={r.pick === gi} disabled={busy} onChange={() => patch({ pick: gi, names: wantsNames(x) })} />
+                        <input type="radio" name={`album-${r.track.id}`} checked={r.pick === gi} disabled={busy} onChange={() => patch({ pick: gi, ...names(x, r.track) })} />
                         <span className="grow">{x.album}</span>
                         <small className="muted" title={`Found on ${x.sources.join(" and ")}`}>{Math.round(x.confidence * 100)}%</small>
                       </label>
                     ))}
-                    {g?.title && (g.title !== r.track.title || g.artist !== r.track.artist) && (
+                    {titleDiffers(g, r.track) && (
                       <label className="albumfind-opt">
-                        <input type="checkbox" checked={r.names} disabled={busy} onChange={(e) => patch({ names: e.target.checked })} />
-                        <span className="grow">Also rename to “{g.title}” by {g.artist}</span>
+                        <input type="checkbox" checked={r.retitle} disabled={busy} onChange={(e) => patch({ retitle: e.target.checked })} />
+                        <span className="grow">Also rename the title to “{g!.title}”</span>
+                      </label>
+                    )}
+                    {artistDiffers(g, r.track) && (
+                      <label className="albumfind-opt">
+                        <input type="checkbox" checked={r.reartist} disabled={busy} onChange={(e) => patch({ reartist: e.target.checked })} />
+                        <span className="grow">Also change the artist to “{g!.artist}”</span>
                       </label>
                     )}
                     <label className="albumfind-opt">
