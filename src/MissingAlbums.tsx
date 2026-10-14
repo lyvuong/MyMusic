@@ -30,6 +30,7 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
   const [soundNote, setSoundNote] = useState("");
   const [auto, setAuto] = useState(false);
   const [none, setNone] = useState(0);
+  const [bySure, setBySure] = useState(false);
   const player = usePlayer();
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
 
@@ -88,6 +89,8 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
     setBusy(false);
   };
 
+  const top = (r: Row) => r.guesses[0]?.confidence ?? 0;
+  const shown = bySure ? [...rows].sort((a, b) => top(b) - top(a)) : rows;
   const chosen = rows.filter((r) => r.pick >= 0);
   const skipped = rows.filter((r) => r.pick < 0);
 
@@ -187,6 +190,7 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
         <>
           <p className="fixv-bar">
             <strong>{rows.length} suggestions · {chosen.length} selected</strong>
+            <button className="link" onClick={() => setBySure((v) => !v)}>{bySure ? "Sort by artist" : "Sort by confidence"}</button>
             {chosen.length > 0 && (
               <button className="link" disabled={busy} onClick={() => setRows((rs) => rs.map((r) => ({ ...r, pick: -1 })))}>Set all to “none of these”</button>
             )}
@@ -194,7 +198,7 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
             <button className="primary" disabled={busy || chosen.length === 0} onClick={() => void apply()}>Apply {chosen.length} albums</button>
           </p>
           <ul className="fixv-list albumfind">
-            {rows.map((r) => {
+            {shown.map((r) => {
               const patch = (p: Partial<Row>) => setRows((rs) => rs.map((x) => (x.track.id === r.track.id ? { ...x, ...p } : x)));
               const g = r.pick >= 0 ? r.guesses[r.pick] : undefined;
               return (
