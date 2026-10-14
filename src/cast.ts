@@ -107,6 +107,13 @@ export function castSeek(seconds: number) {
   controller.seek();
 }
 
+/** Volume of the device while casting (0 to 1). */
+export function castSetVolume(level: number) {
+  if (!player) return;
+  player.volumeLevel = level;
+  controller.setVolumeLevel();
+}
+
 const CHUNK = 20; // a Cast message is limited to 64 KB, so long queues go over in pieces
 
 /**

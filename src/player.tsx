@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Track } from "../shared/types";
 import { api } from "./api";
 import { AiBadge, ArtistPic, Cover } from "./art";
-import { castLoadQueue, castPlayPause, castSeek, getCast, initCast, startCastSession, stopCastSession, subscribeCast } from "./cast";
+import { castLoadQueue, castPlayPause, castSeek, castSetVolume, getCast, initCast, startCastSession, stopCastSession, subscribeCast } from "./cast";
 import { Stars } from "./ratings";
 
 interface PlayerValue {
@@ -15,6 +15,9 @@ interface PlayerValue {
   next: () => void;
   prev: () => void;
   seek: (seconds: number) => void;
+  /** 0 to 1; applies to this page, or to the device while casting. */
+  volume: number;
+  setVolume: (level: number) => void;
   /** Stops playback and hides the player bar. */
   close: () => void;
   /** Google Cast: `available` once a device is around; `casting` while the songs play on that device. */
@@ -34,6 +37,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [volume, setVolumeState] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem("volume") ?? "1");
+      return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1;
+    } catch {
+      return 1;
+    }
+  });
   const resume = useRef(0); // where to continue after a token refresh
   const current = index >= 0 ? (queue[index] ?? null) : null;
 
@@ -118,6 +129,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (castRef.current.casting) castSeek(s);
     else audio.current!.currentTime = s;
   }, []);
+  const setVolume = useCallback((level: number) => {
+    const v = Math.min(1, Math.max(0, level));
+    setVolumeState(v);
+    if (audio.current) audio.current.volume = v;
+    if (castRef.current.casting) castSetVolume(v);
+    try {
+      localStorage.setItem("volume", String(v));
+    } catch {
+      /* private window: the level just is not remembered */
+    }
+  }, []);
   const close = useCallback(() => {
     if (castRef.current.casting) stopCastSession();
     const el = audio.current!;
@@ -161,12 +183,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       playing: casting ? cast.playing : playing,
       position: casting ? cast.position : position,
       duration: casting ? cast.duration || current?.duration || 0 : duration,
-      play, toggle, next, prev, seek, close,
+      play, toggle, next, prev, seek, volume, setVolume, close,
       cast: { available: cast.available, casting, device: cast.device, error: cast.error },
       startCast: () => void startCastSession(),
       stopCast: stopCastSession,
     }),
-    [current, playing, position, duration, play, toggle, next, prev, seek, close, casting, cast.playing, cast.position, cast.duration, cast.available, cast.device, cast.error],
+    [current, playing, position, duration, play, toggle, next, prev, seek, volume, setVolume, close, casting, cast.playing, cast.position, cast.duration, cast.available, cast.device, cast.error],
   );
 
   return (
@@ -174,6 +196,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       {children}
       <audio
         ref={audio}
+        onLoadStart={(e) => { e.currentTarget.volume = volume; }}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onTimeUpdate={(e) => setPosition(e.currentTarget.currentTime)}
@@ -225,6 +248,10 @@ export function PlayerBar() {
               </svg>
             </button>
           )}
+          <label className="player-volume" title="Volume">
+            <span aria-hidden="true">{p.volume === 0 ? "🔇" : p.volume < 0.5 ? "🔉" : "🔊"}</span>
+            <input type="range" min={0} max={1} step={0.05} value={p.volume} onChange={(e) => p.setVolume(Number(e.target.value))} aria-label="Volume" />
+          </label>
           <button onClick={p.close} aria-label="Close player" title="Close player">✕</button>
         </div>
         <div className="player-seek">
