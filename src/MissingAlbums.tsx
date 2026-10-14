@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Track } from "../shared/types";
 import { api } from "./api";
+import { usePlayer } from "./player";
 
 interface Guess { album: string; artist: string; confidence: number; sources: string[]; title?: string }
 interface Song { id: string; title: string; artist: string }
@@ -29,6 +30,8 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
   const [soundNote, setSoundNote] = useState("");
   const [auto, setAuto] = useState(false);
   const [none, setNone] = useState(0);
+  const player = usePlayer();
+  const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
 
   /** What the nightly run saved; songs already in the list keep the choice made on them. */
   const loadSaved = async () => {
@@ -181,6 +184,20 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
               const g = r.pick >= 0 ? r.guesses[r.pick] : undefined;
               return (
                 <li key={r.track.id} className={r.pick >= 0 ? "picked" : ""}>
+                  {byId.get(r.track.id) && (
+                    <button
+                      className="albumfind-play"
+                      aria-label={player.current?.id === r.track.id && player.playing ? `Pause ${r.track.title}` : `Play ${r.track.title}`}
+                      title="Listen to this song"
+                      onClick={() => {
+                        const t = byId.get(r.track.id)!;
+                        if (player.current?.id === t.id) player.toggle();
+                        else player.play([t], 0);
+                      }}
+                    >
+                      {player.current?.id === r.track.id && player.playing ? "❚❚" : "▶"}
+                    </button>
+                  )}
                   <div className="fixv-names">
                     <strong>{r.track.title}</strong>
                     <small className="muted">{r.track.artist}</small>
