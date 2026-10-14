@@ -187,6 +187,9 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
         <>
           <p className="fixv-bar">
             <strong>{rows.length} suggestions · {chosen.length} selected</strong>
+            {chosen.length > 0 && (
+              <button className="link" disabled={busy} onClick={() => setRows((rs) => rs.map((r) => ({ ...r, pick: -1 })))}>Set all to “none of these”</button>
+            )}
             {skipped.length > 0 && <button className="link" disabled={busy} onClick={() => void dismiss()}>Never suggest the {skipped.length} marked “none”</button>}
             <button className="primary" disabled={busy || chosen.length === 0} onClick={() => void apply()}>Apply {chosen.length} albums</button>
           </p>
