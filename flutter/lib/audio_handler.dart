@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -64,6 +65,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     _player.processingStateStream.listen((s) {
       if (s == ProcessingState.completed) unawaited(_onCompleted());
     });
+    _player.playingStream.listen(_holdLocks);
     _player.playerStateStream.listen((s) {
       if (s.playing && s.processingState == ProcessingState.ready) {
         _listened.start();
@@ -72,6 +74,18 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       }
     });
     _player.positionStream.listen((_) => _countIfListened());
+  }
+
+  // Android keeps the CPU and Wi-Fi awake while playing (see MainActivity). The CPU lock times out on its own, so it is
+  // renewed while the music plays.
+  static const _native = MethodChannel('org.lv5.mymusic/playback');
+  Timer? _renew;
+
+  void _holdLocks(bool playing) {
+    _renew?.cancel();
+    _renew = null;
+    if (playing) _renew = Timer.periodic(const Duration(minutes: 5), (_) => _native.invokeMethod<void>('hold').catchError((_) {}));
+    _native.invokeMethod<void>(playing ? 'hold' : 'release').catchError((_) {});
   }
 
   void _beginListen(String id) {
