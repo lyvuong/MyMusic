@@ -160,7 +160,7 @@ export async function suggest(env: Env, familyId: string, uid: string, mood: str
     `LISTENER REQUEST: ${mood ? clip(mood, 200) : "Surprise me with what I would enjoy right now."}\n\n` +
     `TASTE DATA:\n${taste}\n\n` +
     `LIBRARY CANDIDATES (number|artist - title|album|flags: * = popular with the family lately, ! = a well-known song in general):\n${list}\n\n` +
-    "Task: 1) Build a playlist of 18 to 22 songs (about an hour of music) from LIBRARY CANDIDATES that fits the request and the listener's taste, ordered as a good listening flow (mix familiar loves with a few new finds). " +
+    "Task: 1) Build a playlist of 36 to 44 songs (about two hours of music) from LIBRARY CANDIDATES that fits the request and the listener's taste, ordered as a good listening flow (mix familiar loves with a few new finds). " +
     "Refer to songs only by their candidate number \"n\". Give each a short reason \"why\" (max 12 words). " +
     "2) Suggest 5 artists or albums NOT in the library that this listener would probably like, each with a short reason. Only real artists. " +
     "3) Give the playlist a short \"title\" and one friendly sentence \"intro\" about the listening experience.";
@@ -180,7 +180,7 @@ export async function suggest(env: Env, familyId: string, uid: string, mood: str
   try {
     const res = (await env.AI.run(MODEL, {
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      max_tokens: 1800,
+      max_tokens: 3200,
       temperature: 0.7,
       response_format: { type: "json_schema", json_schema: schema },
     })) as { response?: unknown };
@@ -195,7 +195,7 @@ export async function suggest(env: Env, familyId: string, uid: string, mood: str
   const tracks: Suggestion["tracks"] = [];
   for (const p of Array.isArray(parsed.tracks) ? parsed.tracks : []) {
     const t = ctx.candidates[Number(p?.n) - 1];
-    if (!t || seen.has(t.id) || tracks.length >= 30) continue;
+    if (!t || seen.has(t.id) || tracks.length >= 50) continue;
     seen.add(t.id);
     tracks.push({ id: t.id, why: clip(p.why, 120) });
   }
