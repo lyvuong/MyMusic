@@ -1,10 +1,13 @@
+// ignore_for_file: experimental_member_use
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'env.dart';
 import 'mixes.dart';
@@ -54,6 +57,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   final playError = ValueNotifier<String?>(null);
 
   Future<void> _init() async {
+    unawaited(_trimCache());
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
     _player.playbackEventStream.listen((_) => _broadcast(), onError: (Object e, StackTrace st) => _broadcast());
@@ -176,11 +180,63 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         extras: {'trackId': t.id},
       );
 
+  // Streamed songs are saved to a cache while they play, so a dead spot never re-fetches what was already heard and
+  // the next song can be fetched while the current one plays. One instance per song: two writers would clash on the file.
+  static const _cacheMaxBytes = 300 * 1024 * 1024;
+  final _cached = <String, LockCachingAudioSource>{};
+
   Future<AudioSource> _sourceFor(Track t) async {
     final file = app.localPath(t);
     if (file != null) return AudioSource.file(file);
     if (t.isLocal) return AudioSource.uri(Uri.parse(t.uri!));
-    return AudioSource.uri(app.api.streamUri(t.id), headers: await app.api.authHeaders());
+    return await _streamSource(t);
+  }
+
+  Future<LockCachingAudioSource> _streamSource(Track t) async {
+    final have = _cached.remove(t.id);
+    final source = have ?? LockCachingAudioSource(app.api.streamUri(t.id), headers: await app.api.authHeaders());
+    _cached[t.id] = source; // most recent last
+    while (_cached.length > 6) {
+      _cached.remove(_cached.keys.first);
+    }
+    return source;
+  }
+
+  /// Starts fetching the song after the current one so it begins without a pause.
+  Future<void> _prefetchNext() async {
+    int? next;
+    if (_repeat == AudioServiceRepeatMode.one) return;
+    if (_pos + 1 < _order.length) {
+      next = _order[_pos + 1];
+    } else if (_repeat == AudioServiceRepeatMode.all && _order.isNotEmpty) {
+      next = _order[0];
+    }
+    if (next == null) return;
+    final t = _tracks[next];
+    if (t.isLocal || app.localPath(t) != null) return;
+    try {
+      final source = await _streamSource(t);
+      // A one-byte range request makes the source download the whole song into its cache.
+      final res = await source.request(0, 1);
+      unawaited(res.stream.drain<void>().catchError((_) {}));
+    } catch (_) {
+      // Offline or unauthorised: the song is fetched normally when its turn comes.
+    }
+  }
+
+  /// Keeps the stream cache under [_cacheMaxBytes] by deleting the oldest songs.
+  Future<void> _trimCache() async {
+    try {
+      final dir = Directory('${(await getTemporaryDirectory()).path}/just_audio_cache/remote');
+      if (!dir.existsSync()) return;
+      final files = [for (final f in dir.listSync()) if (f is File) f]
+        ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+      var total = 0;
+      for (final f in files) {
+        total += f.lengthSync();
+        if (total > _cacheMaxBytes) await f.delete();
+      }
+    } catch (_) {}
   }
 
   Future<void> _playPos(int pos) async {
@@ -202,6 +258,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       app.markStarted(track.id);
       _beginListen(track.id);
       unawaited(_player.play());
+      unawaited(_prefetchNext());
     } catch (e) {
       if (gen != _gen) return;
       playError.value = "Can't play \"${track.title}\": $e";
