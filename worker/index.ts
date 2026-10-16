@@ -727,7 +727,8 @@ app.post("/api/beets/youtube", async (c) => {
   const url = typeof b.url === "string" ? b.url.trim() : "";
   const title = typeof b.title === "string" ? b.title.trim().slice(0, 200) : "";
   const artist = typeof b.artist === "string" ? b.artist.trim().slice(0, 200) : "";
-  const album = typeof b.album === "string" ? b.album.trim().slice(0, 200) : "";
+  // Songs from YouTube without an album of their own are collected in one called "YouTube".
+  const album = (typeof b.album === "string" ? b.album.trim().slice(0, 200) : "") || "YouTube";
   if (!url || url.length > 300 || !title || !artist) return c.json({ error: "A link, a title and an artist are required." }, 400);
   const st = await homeStatus(c.env);
   if (!st.ok) return c.json({ error: st.error || "Cannot reach the home server." }, 502);

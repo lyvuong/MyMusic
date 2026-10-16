@@ -1071,7 +1071,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
       for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
         try {
           const info = await api.youtubeInfo(url);
-          patchRow(url, { info, title: info.title, artist: info.artist, album: info.album, ai: info.aiLabel || info.aiHint });
+          patchRow(url, { info, title: info.title, artist: info.artist, album: info.album || "YouTube", ai: info.aiLabel || info.aiHint });
         } catch (e) {
           patchRow(url, { error: e instanceof Error ? e.message : "Could not read that link" });
         }
@@ -1176,7 +1176,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
                   <div className="yt-fields">
                     <label>Title <input value={r.title} onChange={(e) => patchRow(r.url, { title: e.target.value })} /></label>
                     <label>Artist <input value={r.artist} onChange={(e) => patchRow(r.url, { artist: e.target.value })} /></label>
-                    <label>Album (optional) <input value={r.album} onChange={(e) => patchRow(r.url, { album: e.target.value })} /></label>
+                    <label>Album <input value={r.album} onChange={(e) => patchRow(r.url, { album: e.target.value })} /></label>
                   </div>
                   <p>
                     <label>

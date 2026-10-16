@@ -109,7 +109,8 @@ class _AddSheetState extends State<_AddSheet> {
         _info = info;
         _title.text = (info['title'] as String?) ?? '';
         _artist.text = (info['artist'] as String?) ?? '';
-        _album.text = (info['album'] as String?) ?? '';
+        final album = (info['album'] as String?) ?? '';
+        _album.text = album.isEmpty ? 'YouTube' : album;
         _ai = info['aiLabel'] == true || info['aiHint'] == true;
       });
     } catch (e) {
@@ -165,7 +166,7 @@ class _AddSheetState extends State<_AddSheet> {
             if (info != null) ...[
               TextField(controller: _title, decoration: const InputDecoration(labelText: 'Title'), onChanged: (_) => setState(() {})),
               TextField(controller: _artist, decoration: const InputDecoration(labelText: 'Artist'), onChanged: (_) => setState(() {})),
-              TextField(controller: _album, decoration: const InputDecoration(labelText: 'Album (optional)')),
+              TextField(controller: _album, decoration: const InputDecoration(labelText: 'Album')),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
