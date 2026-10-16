@@ -91,8 +91,20 @@ function FamilySetup({ onDone }: { onDone: (f: FamilyInfo) => void }) {
   );
 }
 
+// A YouTube link handed over by the "Add to MyMusic" bookmark (?yt=…): read once, then taken out of the address.
+const incomingYoutube: string | null = (() => {
+  try {
+    const url = new URLSearchParams(location.search).get("yt");
+    if (url) history.replaceState(null, "", location.pathname + location.hash);
+    return url && url.length <= 300 ? url : null;
+  } catch {
+    return null;
+  }
+})();
+
 function Shell({ user, family, reloadFamily }: { user: User; family: FamilyInfo; reloadFamily: () => Promise<void> }) {
-  const [tab, setTab] = useState<Tab>("home");
+  // Adding songs is the owner's job, so a link from the bookmark opens the Library tools tab.
+  const [tab, setTab] = useState<Tab>(incomingYoutube && family.role === "owner" ? "tools" : "home");
   const lib = useLibrary(true);
   // The start page sends the Library tab to a search, a genre or one album.
   const [jump, setJump] = useState<Jump | null>(null);
@@ -1048,8 +1060,8 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
   const [ytBusy, setYtBusy] = useState(false);
   const [ytErr, setYtErr] = useState("");
   const patchRow = (url: string, patch: Partial<YtRow>) => setYtRows((rows) => rows.map((r) => (r.url === url ? { ...r, ...patch } : r)));
-  const lookUp = async () => {
-    const urls = [...new Set(ytText.split(/\s+/).filter(Boolean))].slice(0, 20);
+  const lookUp = async (links?: string[]) => {
+    const urls = [...new Set((links ?? ytText.split(/\s+/)).filter(Boolean))].slice(0, 20);
     if (!urls.length) return;
     setYtBusy(true);
     setYtErr("");
@@ -1096,6 +1108,23 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
   };
 
   const ytRuns = runs.filter((r) => r.kind === "youtube" && isOpen(r));
+
+  // A link sent by the "Add to MyMusic" bookmark (?yt=…) is looked up at once, so only the names are left to confirm.
+  const incoming = useRef(incomingYoutube);
+  useEffect(() => {
+    const url = incoming.current;
+    incoming.current = null;
+    if (!url) return;
+    setYtText(url);
+    void lookUp([url]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The bookmark opens this app with the page's address. React refuses javascript: links, so it is set on the element.
+  const bookmark = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    bookmark.current?.setAttribute("href", `javascript:void(window.open(${JSON.stringify(location.origin + "/?yt=")}+encodeURIComponent(location.href),"_blank"))`);
+  }, []);
 
   return (
     <>
@@ -1176,6 +1205,11 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
           )}
           {ytErr && <p className="error" role="alert">{ytErr}</p>}
         </form>
+        <p>
+          <small className="muted">
+            One click from YouTube: drag <a ref={bookmark} className="link" onClick={(e) => e.preventDefault()}>Add to MyMusic</a> to your bookmarks bar, then click it while a video is open.
+          </small>
+        </p>
         {ytRuns.length > 0 && (
           <ul>
             {ytRuns.map((r) => {

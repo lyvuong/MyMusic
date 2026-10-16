@@ -116,6 +116,14 @@ class ApiClient {
     return [for (final m in j['mixes'] as List) Mix.fromJson(m as Map<String, dynamic>)];
   }
 
+  /// What the server reads from a YouTube link (owner only): title, artist, album, duration, tooLong, aiLabel, aiHint.
+  Future<Map<String, dynamic>> youtubeInfo(String url) async =>
+      await _send('POST', '/api/beets/youtube/info', body: {'url': url}, timeout: const Duration(seconds: 60)) as Map<String, dynamic>;
+
+  /// Queues one YouTube video for download and import on the home server (owner only).
+  Future<void> importYoutube({required String url, required String title, required String artist, required String album, required bool ai}) =>
+      _send('POST', '/api/beets/youtube', body: {'url': url, 'title': title, 'artist': artist, 'album': album, 'ai': ai});
+
   /// Signed, car-sized cover URLs (no login header needed) and when they stop working (epoch seconds).
   Future<({Map<String, String> urls, int exp})> artUrls(List<String> ids) async {
     final j = await _send('POST', '/api/art-urls', body: {'ids': ids}, timeout: const Duration(seconds: 8)) as Map<String, dynamic>;

@@ -10,6 +10,7 @@ import 'store.dart';
 import 'ui/family_screen.dart';
 import 'ui/home.dart';
 import 'ui/sign_in.dart';
+import 'ui/youtube_share.dart';
 
 final messengerKey = GlobalKey<ScaffoldMessengerState>();
 
@@ -77,7 +78,7 @@ class _Gate extends StatelessWidget {
         if (app.user == null) return const SignInScreen();
         if (!app.familyLoaded) return const Scaffold(body: Center(child: CircularProgressIndicator()));
         if (app.family == null) return const FamilyScreen();
-        return const HomeShell();
+        return const YoutubeShareListener(child: HomeShell());
       },
     );
   }
