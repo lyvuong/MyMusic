@@ -18,7 +18,8 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        keepShared(intent)
+        // The Flutter engine can outlive the activity (the music keeps playing): tell the running app about the share.
+        if (keepShared(intent)) channel?.invokeMethod("shared", null)
     }
 
     override fun onNewIntent(intent: Intent) {

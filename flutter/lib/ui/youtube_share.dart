@@ -13,12 +13,20 @@ class YoutubeShareListener extends StatefulWidget {
   State<YoutubeShareListener> createState() => _YoutubeShareListenerState();
 }
 
-class _YoutubeShareListenerState extends State<YoutubeShareListener> {
+class _YoutubeShareListenerState extends State<YoutubeShareListener> with WidgetsBindingObserver {
   static const _channel = MethodChannel('org.lv5.mymusic/playback');
+  bool _open = false; // a sheet is showing
+
+  // Coming back to the app is the sure moment to pick up a share, whichever way Android delivered it.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _take();
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'shared') await _take();
     });
@@ -27,6 +35,7 @@ class _YoutubeShareListenerState extends State<YoutubeShareListener> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _channel.setMethodCallHandler(null);
     super.dispose();
   }
@@ -45,12 +54,16 @@ class _YoutubeShareListenerState extends State<YoutubeShareListener> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Only the library owner can add songs from YouTube.')));
       return;
     }
+    // A new share replaces the sheet of the previous one.
+    if (_open) Navigator.of(context).pop();
+    _open = true;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (_) => _AddSheet(url: link),
     );
+    _open = false;
   }
 
   @override
