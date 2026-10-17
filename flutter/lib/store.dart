@@ -41,7 +41,10 @@ class LocalStore {
   void _load(Map<String, dynamic> j) {
     since = (j['since'] as num?)?.toInt() ?? 0;
     family = j['family'] == null ? null : FamilyInfo.fromJson(j['family'] as Map<String, dynamic>);
-    tracks = {for (final t in (j['tracks'] as List? ?? [])) (t as Map<String, dynamic>)['id'] as String: Track.fromJson(t)};
+    final saved = j['tracks'] as List? ?? [];
+    tracks = {for (final t in saved) (t as Map<String, dynamic>)['id'] as String: Track.fromJson(t)};
+    // A library saved before songs carried the AI flag: read it all again once to learn which songs are AI.
+    if (saved.isNotEmpty && !(saved.first as Map).containsKey('ai')) since = 0;
     playlists = {for (final p in (j['playlists'] as List? ?? [])) (p as Map<String, dynamic>)['id'] as String: Playlist.fromJson(p)};
     phoneTracks = {for (final t in (j['phoneTracks'] as List? ?? [])) (t as Map<String, dynamic>)['id'] as String: Track.fromJson(t)};
     downloads = ((j['downloads'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toInt()));

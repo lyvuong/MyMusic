@@ -12,6 +12,7 @@ class Track {
     this.size = 0,
     this.etag = '',
     this.uri,
+    this.ai = false,
   });
 
   final String id;
@@ -25,6 +26,7 @@ class Track {
   final int size;
   final String etag;
   final String? uri;
+  final bool ai; // made by AI: shown with a badge
 
   bool get isLocal => source == 'local';
 
@@ -40,6 +42,7 @@ class Track {
         size: (j['size'] as num?)?.toInt() ?? 0,
         etag: (j['etag'] as String?) ?? '',
         uri: j['uri'] as String?,
+        ai: (j['ai'] as bool?) ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -54,6 +57,7 @@ class Track {
         'size': size,
         'etag': etag,
         if (uri != null) 'uri': uri,
+        'ai': ai,
       };
 }
 

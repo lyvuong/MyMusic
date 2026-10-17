@@ -184,7 +184,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   MediaItem _item(Track t, Map<String, String> headers, {String ctx = ''}) => MediaItem(
         id: 't:${t.id}${ctx.isEmpty ? '' : '|$ctx'}',
-        title: t.title,
+        title: t.ai ? '${t.title} · AI' : t.title, // the car screen has no badge, so the title says it
         artist: t.artist.isEmpty ? null : t.artist,
         album: t.album.isEmpty ? null : t.album,
         duration: t.duration > 0 ? Duration(milliseconds: (t.duration * 1000).round()) : null,
