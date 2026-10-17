@@ -33,6 +33,8 @@ Future<void> main() async {
       androidNotificationChannelId: 'org.lv5.mymusic.playback',
       androidNotificationChannelName: 'Music playback',
       androidNotificationIcon: 'drawable/ic_notification',
+      // Keep the player notification (and Android Auto's now-playing bar) while paused.
+      androidStopForegroundOnPause: false,
       // Android Auto: songs as a list; folders opt in to a grid of covers (albums, playlists, artists, For You).
       androidBrowsableRootExtras: {
         AndroidContentStyle.supportedKey: true,

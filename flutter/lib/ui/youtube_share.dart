@@ -27,6 +27,8 @@ class _YoutubeShareListenerState extends State<YoutubeShareListener> with Widget
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Ask once for the notification permission; without it there is no player notification and no bar in Android Auto.
+    _channel.invokeMethod<void>('requestNotifications').catchError((_) {});
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'shared') await _take();
     });

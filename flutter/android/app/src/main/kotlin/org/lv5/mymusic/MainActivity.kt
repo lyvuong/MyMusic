@@ -1,8 +1,11 @@
 package org.lv5.mymusic
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import com.ryanheise.audioservice.AudioServiceActivity
@@ -41,6 +44,15 @@ class MainActivity : AudioServiceActivity() {
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "org.lv5.mymusic/playback")
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                // Android 13+ shows no playback notification (and Android Auto no now-playing bar) until this is allowed.
+                "requestNotifications" -> {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+                    }
+                    result.success(null)
+                }
                 "takeShared" -> {
                     result.success(sharedText)
                     sharedText = null
