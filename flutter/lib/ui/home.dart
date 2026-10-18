@@ -254,7 +254,10 @@ class DownloadsPage extends StatelessWidget {
       builder: (context, _) {
         final tracks = app.downloadedTracks;
         return Scaffold(
-          appBar: AppBar(title: const Text('Available offline')),
+          appBar: AppBar(title: const Text('Available offline'), actions: [
+            if (tracks.isNotEmpty)
+              IconButton(icon: const Icon(Icons.playlist_add), tooltip: 'Add all to playlist', onPressed: () => addToPlaylistDialog(context, tracks)),
+          ]),
           body: tracks.isEmpty
               ? const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('Nothing downloaded yet. Use the menu on a song, or "Download all" on a playlist.', textAlign: TextAlign.center)))
               : Column(children: [

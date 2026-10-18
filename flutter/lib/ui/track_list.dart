@@ -18,6 +18,7 @@ class TrackListPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(title), actions: [
+        IconButton(icon: const Icon(Icons.playlist_add), tooltip: 'Add all to playlist', onPressed: () => addToPlaylistDialog(context, tracks)),
         IconButton(icon: const Icon(Icons.download_for_offline), tooltip: 'Download all', onPressed: () => context.app.downloadAll(tracks)),
       ]),
       body: Column(children: [

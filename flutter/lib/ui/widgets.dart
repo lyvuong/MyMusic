@@ -136,7 +136,7 @@ class TrackTile extends StatelessWidget {
       case 'remove':
         onRemove?.call();
       case 'playlist':
-        await addToPlaylistDialog(context, track);
+        await addToPlaylistDialog(context, [track]);
       case 'rate':
         await showModalBottomSheet<void>(
           context: context,
@@ -155,7 +155,9 @@ class TrackTile extends StatelessWidget {
   }
 }
 
-Future<void> addToPlaylistDialog(BuildContext context, Track track) async {
+/// Adds [tracks] (one song, an album, everything downloaded) to a playlist the member picks or creates; songs already in it are skipped.
+Future<void> addToPlaylistDialog(BuildContext context, List<Track> tracks) async {
+  if (tracks.isEmpty) return;
   final app = context.app;
   final messenger = ScaffoldMessenger.of(context);
   final mine = app.playlists.where((p) => p.ownerUid == app.user?.uid).toList();
@@ -174,16 +176,24 @@ Future<void> addToPlaylistDialog(BuildContext context, Track track) async {
     final name = await promptText(context, 'New playlist', 'Name');
     if (name == null || name.isEmpty) return;
     final p = await app.createPlaylist(name);
-    p.trackIds.add(track.id);
+    for (final t in tracks) {
+      if (!p.trackIds.contains(t.id)) p.trackIds.add(t.id);
+    }
     await app.savePlaylist(p);
+    messenger.showSnackBar(SnackBar(content: Text(tracks.length == 1 ? 'Added to playlist' : 'Added ${tracks.length} songs to "$name"')));
   } else {
     final p = app.store.playlists[choice]!;
-    if (!p.trackIds.contains(track.id)) {
-      p.trackIds.add(track.id);
+    final fresh = [for (final t in tracks) if (!p.trackIds.contains(t.id)) t.id];
+    if (fresh.isNotEmpty) {
+      p.trackIds.addAll(fresh);
       await app.savePlaylist(p);
     }
+    messenger.showSnackBar(SnackBar(
+      content: Text(tracks.length == 1
+          ? 'Added to playlist'
+          : fresh.isEmpty ? 'Already in "${p.name}"' : 'Added ${fresh.length} song${fresh.length == 1 ? '' : 's'} to "${p.name}"'),
+    ));
   }
-  messenger.showSnackBar(const SnackBar(content: Text('Added to playlist')));
 }
 
 Future<String?> promptText(BuildContext context, String title, String label, {String initial = ''}) {
