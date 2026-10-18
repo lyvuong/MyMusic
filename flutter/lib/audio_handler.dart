@@ -203,7 +203,26 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     final file = app.localPath(t);
     if (file != null) return AudioSource.file(file);
     if (t.isLocal) return AudioSource.uri(Uri.parse(t.uri!));
+    // The same song may be on this phone under another id (a download of a duplicate, or the phone's own file): use it
+    // rather than streaming.
+    final twin = _copyOnPhone(t);
+    if (twin != null) return twin.isLocal ? AudioSource.uri(Uri.parse(twin.uri!)) : AudioSource.file(app.localPath(twin)!);
     return await _streamSource(t);
+  }
+
+  static String _key(String s) => s.toLowerCase().replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), '');
+
+  /// A downloaded song or phone file with the same title and artist (and about the same length), or null.
+  Track? _copyOnPhone(Track t) {
+    final title = _key(t.title);
+    final artist = _key(t.artist);
+    if (title.isEmpty) return null;
+    for (final c in [...app.downloadedTracks, ...app.store.phoneTracks.values]) {
+      if (c.id == t.id || _key(c.title) != title || _key(c.artist) != artist) continue;
+      if (t.duration > 0 && c.duration > 0 && (t.duration - c.duration).abs() > 3) continue;
+      if (c.isLocal || app.localPath(c) != null) return c;
+    }
+    return null;
   }
 
   Future<LockCachingAudioSource> _streamSource(Track t) async {
@@ -227,7 +246,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     }
     if (next == null) return;
     final t = _tracks[next];
-    if (t.isLocal || app.localPath(t) != null) return;
+    if (t.isLocal || app.localPath(t) != null || _copyOnPhone(t) != null) return;
     try {
       final source = await _streamSource(t);
       // A one-byte range request makes the source download the whole song into its cache.
