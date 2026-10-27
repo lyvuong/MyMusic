@@ -1,3 +1,4 @@
+import { UNTAGGED } from "../shared/genres";
 import type { BrowsePage, HomeData, MixInfo, Track } from "../shared/types";
 import { toTrack, type TrackRow } from "./library";
 import { getMixes } from "./mixes";
@@ -36,6 +37,22 @@ export function matchQuery(q: string, column?: "artist" | "album"): string | nul
   return column ? `${column} : (${terms})` : terms;
 }
 
+/**
+ * A song's genre as the lists show it (the filter value is "Pop" for a real one, "~Pop" for guessed as Pop, "~" for none). Its own tag wins, then a genre you set for the artist; what is left is the
+ * artist's genre from artist_genres, which the app worked out itself (GUESS) and shows marked as a guess.
+ */
+const ARTIST_JOIN = "LEFT JOIN artist_genres ag ON ag.family_id = t.family_id AND ag.artist = t.artist";
+const REAL = "(CASE WHEN t.genre != '' THEN t.genre WHEN ag.source = 'user' THEN ag.genre ELSE '' END)";
+const GUESS = "(CASE WHEN t.genre = '' AND COALESCE(ag.source, '') != 'user' THEN COALESCE(ag.genre, '') ELSE '' END)";
+const GENRE_COLS = `${REAL} AS real_genre, ${GUESS} AS guess`;
+
+function genreFilter(genre: string): { sql: string; args: string[] } {
+  if (!genre) return { sql: "", args: [] };
+  if (genre === UNTAGGED) return { sql: ` AND ${REAL} = '' AND ${GUESS} = ''`, args: [] };
+  if (genre.startsWith(UNTAGGED)) return { sql: ` AND ${GUESS} = ?`, args: [genre.slice(1)] };
+  return { sql: ` AND ${REAL} = ?`, args: [genre] };
+}
+
 const chunks = <T>(items: T[], size: number): T[][] => {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -47,7 +64,7 @@ export async function tracksByIds(db: D1Database, familyId: string, ids: string[
   const unique = [...new Set(ids)];
   const found = new Map<string, Track>();
   for (const part of chunks(unique, IN_CHUNK)) {
-    const r = await db.prepare(`SELECT * FROM tracks WHERE family_id = ? AND deleted = 0 AND id IN (${part.map(() => "?").join(",")})`)
+    const r = await db.prepare(`SELECT t.*, ${GENRE_COLS} FROM tracks t ${ARTIST_JOIN} WHERE t.family_id = ? AND t.deleted = 0 AND t.id IN (${part.map(() => "?").join(",")})`)
       .bind(familyId, ...part).all<TrackRow>();
     for (const row of r.results) found.set(row.id, toTrack(row));
   }
@@ -64,21 +81,22 @@ export async function browse(
   const limit = Math.min(Math.max(Math.floor(o.limit ?? PAGE_SONGS), 1), PAGE_GROUPED);
   const genre = (o.genre ?? "").trim();
   const match = o.q ? matchQuery(o.q) : null;
+  const g = genreFilter(genre);
   const cursor = Math.max(Math.floor(o.cursor ?? 0), 0);
   if (match) {
     const offset = Math.min(cursor, MAX_OFFSET);
     const r = await db.prepare(
-      "SELECT t.*, t.rowid AS rid FROM tracks_fts JOIN tracks t ON t.rowid = tracks_fts.rowid " +
-        `WHERE tracks_fts MATCH ? AND t.family_id = ? AND t.deleted = 0${genre ? " AND t.genre = ?" : ""} ` +
+      `SELECT t.*, t.rowid AS rid, ${GENRE_COLS} FROM tracks_fts JOIN tracks t ON t.rowid = tracks_fts.rowid ${ARTIST_JOIN} ` +
+        `WHERE tracks_fts MATCH ? AND t.family_id = ? AND t.deleted = 0${g.sql} ` +
         "ORDER BY bm25(tracks_fts, 8, 4, 3), t.rowid DESC LIMIT ? OFFSET ?",
-    ).bind(match, familyId, ...(genre ? [genre] : []), limit + 1, offset).all<TrackRow & { rid: number }>();
+    ).bind(match, familyId, ...g.args, limit + 1, offset).all<TrackRow & { rid: number }>();
     const more = r.results.length > limit && offset + limit < MAX_OFFSET;
     return { tracks: r.results.slice(0, limit).map(toTrack), next: more ? offset + limit : null };
   }
   const r = await db.prepare(
-    "SELECT t.*, t.rowid AS rid FROM tracks t WHERE t.family_id = ? AND t.deleted = 0" +
-      `${genre ? " AND t.genre = ?" : ""}${cursor > 0 ? " AND t.rowid < ?" : ""} ORDER BY t.rowid DESC LIMIT ?`,
-  ).bind(familyId, ...(genre ? [genre] : []), ...(cursor > 0 ? [cursor] : []), limit + 1).all<TrackRow & { rid: number }>();
+    `SELECT t.*, t.rowid AS rid, ${GENRE_COLS} FROM tracks t ${ARTIST_JOIN} WHERE t.family_id = ? AND t.deleted = 0` +
+      `${g.sql}${cursor > 0 ? " AND t.rowid < ?" : ""} ORDER BY t.rowid DESC LIMIT ?`,
+  ).bind(familyId, ...g.args, ...(cursor > 0 ? [cursor] : []), limit + 1).all<TrackRow & { rid: number }>();
   const page = r.results.slice(0, limit);
   return { tracks: page.map(toTrack), next: r.results.length > limit ? page[page.length - 1]!.rid : null };
 }
@@ -87,7 +105,7 @@ export async function browse(
 export async function groupTracks(db: D1Database, familyId: string, kind: "album" | "artist", name: string): Promise<Track[]> {
   const col = kind === "album" ? "album" : "artist";
   const r = await db.prepare(
-    `SELECT * FROM tracks WHERE family_id = ? AND deleted = 0 AND ${col} = ? ORDER BY album, track_no, title LIMIT 1000`,
+    `SELECT t.*, ${GENRE_COLS} FROM tracks t ${ARTIST_JOIN} WHERE t.family_id = ? AND t.deleted = 0 AND t.${col} = ? ORDER BY t.album, t.track_no, t.title LIMIT 1000`,
   ).bind(familyId, name).all<TrackRow>();
   return r.results.map(toTrack);
 }
@@ -137,10 +155,12 @@ async function popularSongs(db: D1Database, familyId: string, limit: number): Pr
   return [...played, ...hits].slice(0, limit);
 }
 
-async function genreCounts(db: D1Database, familyId: string): Promise<{ name: string; count: number }[]> {
-  const r = await db.prepare("SELECT genre, COUNT(*) AS n FROM tracks WHERE family_id = ? AND deleted = 0 GROUP BY genre")
-    .bind(familyId).all<{ genre: string; n: number }>();
-  return r.results.map((g) => ({ name: g.genre, count: g.n }));
+/** Songs per genre: real ones, then the guessed ones (`guessed`), and the songs with no genre at all (name ""). */
+async function genreCounts(db: D1Database, familyId: string): Promise<{ name: string; count: number; guessed?: boolean }[]> {
+  const r = await db.prepare(
+    `SELECT ${GENRE_COLS}, COUNT(*) AS n FROM tracks t ${ARTIST_JOIN} WHERE t.family_id = ? AND t.deleted = 0 GROUP BY real_genre, guess`,
+  ).bind(familyId).all<{ real_genre: string; guess: string; n: number }>();
+  return r.results.map((g) => g.real_genre ? { name: g.real_genre, count: g.n } : g.guess ? { name: g.guess, count: g.n, guessed: true } : { name: "", count: g.n });
 }
 
 /** The caller's own lists: loved songs, and loved songs not played for a while. */
@@ -188,6 +208,7 @@ export async function homeData(db: D1Database, familyId: string, uid: string): P
     lists: { popular: keep(popularIds), top: keep(mine.top), rediscover: keep(mine.rediscover) },
     tracks: extra,
     genres: genres.filter((g) => g.name !== "").sort((a, b) => b.count - a.count),
+    untagged: genres.filter((g) => g.name === "").reduce((s, g) => s + g.count, 0),
     songs: genres.reduce((s, g) => s + g.count, 0),
     missingCovers: covers?.n ?? 0,
   };

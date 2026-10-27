@@ -120,6 +120,36 @@ describe("browse", () => {
   });
 });
 
+describe("guessed genres", () => {
+  it("falls back to the artist's genre, marked as a guess, and filters on it", async () => {
+    const { sql, db } = database();
+    seed(sql);
+    const tagged = song(sql, { title: "Tagged", artist: "A", genre: "Rock" });
+    const guessed = song(sql, { title: "Guessed", artist: "B" });
+    const mine = song(sql, { title: "Mine", artist: "C" });
+    const none = song(sql, { title: "None", artist: "D" });
+    const put = sql.prepare("INSERT INTO artist_genres (family_id, artist, genre, source, built_at) VALUES ('f', ?, ?, ?, 0)");
+    put.run("B", "Pop", "ai");
+    put.run("C", "Jazz", "user");
+    put.run("D", "", "ai");
+    const all = (await browse(db, "f", {})).tracks;
+    const by = (id: string) => all.find((t) => t.id === id)!;
+    expect(by(tagged)).toMatchObject({ genre: "Rock" });
+    expect(by(tagged).genreGuess).toBeUndefined();
+    expect(by(guessed)).toMatchObject({ genre: "", genreGuess: "Pop" });
+    expect(by(mine)).toMatchObject({ genre: "Jazz" });
+    expect(by(mine).genreGuess).toBeUndefined();
+    expect((await browse(db, "f", { genre: "Pop" })).tracks).toEqual([]);
+    expect((await browse(db, "f", { genre: "~Pop" })).tracks.map((t) => t.id)).toEqual([guessed]);
+    expect((await browse(db, "f", { genre: "Jazz" })).tracks.map((t) => t.id)).toEqual([mine]);
+    expect((await browse(db, "f", { genre: "~" })).tracks.map((t) => t.id)).toEqual([none]);
+    expect((await browse(db, "f", { q: "guessed", genre: "~Pop" })).tracks.map((t) => t.id)).toEqual([guessed]);
+    const h = await homeData(db, "f", "u1");
+    expect(h.genres).toEqual(expect.arrayContaining([{ name: "Rock", count: 1 }, { name: "Jazz", count: 1 }, { name: "Pop", count: 1, guessed: true }]));
+    expect(h.untagged).toBe(1);
+  });
+});
+
 describe("the rest of the browse API", () => {
   it("returns an album's songs in track order and resolves ids", async () => {
     const { sql, db } = database();
@@ -152,6 +182,7 @@ describe("the rest of the browse API", () => {
     expect(h.lists.top).toEqual([ids[1]]);
     expect(h.lists.rediscover).toEqual([ids[1]]);
     expect(h.genres).toEqual([{ name: "Pop", count: 3 }]);
+    expect(h.untagged).toBe(0);
     expect(h.songs).toBe(3);
     const seen = sql.prepare("SELECT last_seen_at FROM members WHERE uid = 'u1'").get() as { last_seen_at: number };
     expect(seen.last_seen_at).toBeGreaterThan(0);

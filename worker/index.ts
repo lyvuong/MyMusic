@@ -4,6 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { signedQuery, verifySigned } from "./cast";
 import { verifyIdToken, type User } from "./auth";
 import { createFamily, createInvite, familyInfo, joinWithInvite, membershipOf, removeMember, type Membership } from "./family";
+import { setArtistGenre } from "./genres";
 import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
@@ -308,6 +309,15 @@ app.patch("/api/tracks/:id", async (c) => {
     throw e;
   }
   return c.json(await afterFileEdit(c.env, c.executionCtx, files));
+});
+
+/** Sets the genre of an artist's songs that have none in their tags; an empty genre lets the app guess again. */
+app.put("/api/artist-genre", async (c) => {
+  const b = await c.req.json<{ artist?: unknown; genre?: unknown }>().catch(() => null);
+  const artist = cleanName(b?.artist);
+  if (!b || !artist) return c.json({ error: "bad request" }, 400);
+  await setArtistGenre(c.env.DB, c.get("family").familyId, artist, cleanName(b.genre, 40));
+  return c.json({ ok: true });
 });
 
 /**

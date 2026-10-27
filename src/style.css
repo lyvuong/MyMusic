@@ -241,3 +241,6 @@ form.search-box .search { padding-right: 16px; }
 .seg.wrap { flex-wrap: wrap; overflow: visible; }
 .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .filters .seg { margin: 0; }
+
+/* A genre the app worked out from the artist, not read from the songs. */
+.seg button.guessed { border-style: dashed; }

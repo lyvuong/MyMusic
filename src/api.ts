@@ -112,6 +112,7 @@ export const api = {
   vietnameseCorrections: () => call<{ corrections: { from: string; to: string }[] }>("GET", "/api/vietnamese/corrections"),
   saveVietnameseCorrections: (items: { from: string; to: string }[]) => call<{ saved: number }>("POST", "/api/vietnamese/corrections", { items }),
   /** Renames an artist or album on all its songs; an existing name merges the two. */
+  setArtistGenre: (artist: string, genre: string) => call<{ ok: boolean }>("PUT", "/api/artist-genre", { artist, genre }),
   renameGroup: (kind: "artist" | "album", from: string, to: string) => call<{ updated: number; filesUpdated: boolean; warning: string }>("POST", "/api/library/rename", { kind, from, to }),
   setAlbumCover: (album: string, image: string) => call<{ ok: boolean; filesUpdated: boolean; warning: string }>("POST", "/api/library/cover", { album, image }),
   castMedia: (ids: string[]) => call<{ items: Record<string, { stream: string; art: string | null }> }>("POST", "/api/cast/media", { ids }),

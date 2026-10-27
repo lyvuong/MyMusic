@@ -1,3 +1,4 @@
+import { GENRES } from "../shared/genres";
 import { MODEL } from "./suggest";
 
 /**
@@ -6,13 +7,6 @@ import { MODEL } from "./suggest";
  *  2. the AI names a genre for the rest from the artist's name and a few of their titles, or "unknown".
  * The result lives in artist_genres and is only a fallback: a song's own genre always wins.
  */
-
-/** The genres the AI may answer with; the themes in themes.ts match on these words. */
-export const GENRES = [
-  "Pop", "Rock", "Hip-Hop", "R&B", "Soul", "Dance", "Electronic", "Ballad", "Jazz", "Blues", "Classical", "Instrumental",
-  "Folk", "Country", "Acoustic", "Latin", "K-Pop", "Metal", "Reggae", "Soundtrack",
-  "Vietnamese Pop", "Vietnamese Ballad", "Vietnamese Bolero", "Vietnamese Rap",
-];
 
 const BATCH = 60; // artists per AI call
 const RUN_BATCHES = 3; // per family per run
@@ -105,6 +99,31 @@ async function ask(ai: NonNullable<Env["AI"]>, batch: Pending[]): Promise<Map<st
  * Returns how many artists got a genre this run and whether nothing is left to look at.
  */
 export async function fillGenres(env: Env, familyId: string): Promise<{ filled: number; done: boolean }> {
+  const r = await fill(env, familyId);
+  if (r.filled > 0) await forgetGenreCounts(env.DB, familyId);
+  return r;
+}
+
+/** The genre list on the start page is kept for hours; new genres should show at once. */
+const forgetGenreCounts = (db: D1Database, familyId: string) =>
+  db.prepare("DELETE FROM family_cache WHERE family_id = ? AND key = 'genres'").bind(familyId).run();
+
+/** Sets the genre of an artist's songs that have none in their tags (source 'user': shown as a real genre, not a guess).
+ * An empty genre removes it, so the app works one out again. */
+export async function setArtistGenre(db: D1Database, familyId: string, artist: string, genre: string): Promise<void> {
+  const g = canonical.get(clip(genre, 40).toLowerCase()) ?? clip(genre, 40);
+  if (g) {
+    await db.prepare(
+      "INSERT INTO artist_genres (family_id, artist, genre, source, built_at) VALUES (?, ?, ?, 'user', ?) " +
+        "ON CONFLICT(family_id, artist) DO UPDATE SET genre = excluded.genre, source = 'user', built_at = excluded.built_at",
+    ).bind(familyId, artist, g, Date.now()).run();
+  } else {
+    await db.prepare("DELETE FROM artist_genres WHERE family_id = ? AND artist = ?").bind(familyId, artist).run();
+  }
+  await forgetGenreCounts(db, familyId);
+}
+
+async function fill(env: Env, familyId: string): Promise<{ filled: number; done: boolean }> {
   let filled = await inheritGenres(env.DB, familyId);
   if (!env.AI) return { filled, done: true };
   for (let i = 0; i < RUN_BATCHES; i++) {

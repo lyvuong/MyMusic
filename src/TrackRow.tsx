@@ -17,7 +17,7 @@ export function TrackRow({ t, queue, extra, number, hideArtist, select, note }: 
       </button>
       <span className="grow">
         <strong>{t.title}{t.ai && <> <AiBadge /></>}</strong>
-        <small>{[hideArtist ? "" : t.artist, number === undefined ? t.album : ""].filter(Boolean).join(" · ")}</small>
+        <small>{[hideArtist ? "" : t.artist, number === undefined ? t.album : "", number === undefined ? t.genre || (t.genreGuess ? `${t.genreGuess} (guessed)` : "") : ""].filter(Boolean).join(" · ")}</small>
         {note && <small className="muted">{note}</small>}
       </span>
       {t.duration > 0 && <small className="dur">{mins}:{String(Math.floor(t.duration % 60)).padStart(2, "0")}</small>}

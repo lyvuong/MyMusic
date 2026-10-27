@@ -1,5 +1,6 @@
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { GENRES, genreValue, UNTAGGED } from "../shared/genres";
 import type { BeetsRun, FamilyInfo, Playlist, ServerStatus, Suggestion, TasteProfile, Track, YoutubeInfo } from "../shared/types";
 import { api } from "./api";
 import { AiBadge, ArtistPic, Cover } from "./art";
@@ -208,6 +209,7 @@ function Library({ lib, uid, home, isOwner, openTools, jump }: { lib: LibrarySta
   }, [q]);
   const { data: homeData } = useHome();
   const genres = homeData?.genres ?? [];
+  const untagged = homeData?.untagged ?? 0;
   const [results, setResults] = useState<Track[]>([]);
   const [next, setNext] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -419,13 +421,19 @@ function Library({ lib, uid, home, isOwner, openTools, jump }: { lib: LibrarySta
     const current = editing.name;
     const nfc = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim();
     const count = shownDetail?.length ?? 0;
+    // The artist's genre as the songs show it: a real one if any song has it, else the guessed one.
+    const artistGenre = (shownDetail ?? []).map((t) => t.genre).find(Boolean) ?? (shownDetail ?? []).map((t) => t.genreGuess).find(Boolean) ?? "";
     return (
       <EditDialog
         title={kind === "album" ? "Rename or merge album" : "Rename or merge artist"}
         onClose={close}
-        fields={[{ key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, accents: isOwner, kind, lookup: async (typed: string) => (knownNames.current = await names(kind)(typed)) }]}
+        fields={[
+          { key: "name", label: kind === "album" ? "Album name" : "Artist name", value: current, required: true, accents: isOwner, kind, lookup: async (typed: string) => (knownNames.current = await names(kind)(typed)) },
+          ...(kind === "artist" ? [{ key: "genre", label: "Genre (for songs without one in their file)", value: artistGenre, options: GENRES }] : []),
+        ]}
         hint={(v) => {
           const to = nfc(v.name ?? "");
+          if (to === nfc(current)) return { text: `Sets the genre of ${current}'s songs that have none in their file. Leave it empty to let the app guess again.`, action: "Save" };
           const target = knownNames.current.find((n) => n !== current && nfc(n) === to);
           return target
             ? { text: `"${target}" already exists. All ${songCount(count)} here move into it and "${current}" is removed.`, action: "Merge" }
@@ -433,6 +441,15 @@ function Library({ lib, uid, home, isOwner, openTools, jump }: { lib: LibrarySta
         }}
         onSave={async (v) => {
           const to = nfc(v.name);
+          const newGenre = (v.genre ?? "").trim();
+          if (kind === "artist" && newGenre !== artistGenre.trim()) {
+            await api.setArtistGenre(current, newGenre);
+            if (to === nfc(current)) {
+              await refresh();
+              flash(newGenre ? `Genre of ${current} set to ${newGenre}` : `Genre of ${current} cleared`);
+              return;
+            }
+          }
           const existing = (await api.names(kind, to)).names.find((n) => n !== current && nfc(n) === to);
           renaming.current = true;
           let r;
@@ -497,7 +514,7 @@ function Library({ lib, uid, home, isOwner, openTools, jump }: { lib: LibrarySta
 
   const views: [View, string][] = [["albums", "Albums"], ["artists", "Artists"], ["songs", "Songs"]];
   const filtered = !!dq.trim() || !!genre;
-  const noMatch = filtered ? `Nothing matches${dq.trim() ? ` "${dq.trim()}"` : ""}${genre ? ` in ${genre}` : ""}. Words can be in any order, and accents and capitals do not matter.` : "";
+  const noMatch = filtered ? `Nothing matches${dq.trim() ? ` "${dq.trim()}"` : ""}${genre ? ` in ${genre === UNTAGGED ? "songs without a genre" : genre.replace(/^~/, "")}` : ""}. Words can be in any order, and accents and capitals do not matter.` : "";
   const heading = filtered ? "Results" : "Recently added";
   return (
     <div className="wide">
@@ -524,7 +541,8 @@ function Library({ lib, uid, home, isOwner, openTools, jump }: { lib: LibrarySta
         {genres.length > 0 && (
           <select aria-label="Genre" value={genre} onChange={(e) => setGenre(e.target.value)}>
             <option value="">All genres</option>
-            {genres.map((g) => <option key={g.name} value={g.name}>{g.name} ({g.count})</option>)}
+            {genres.map((g) => <option key={`${g.guessed ? "~" : ""}${g.name}`} value={genreValue(g)}>{g.name}{g.guessed ? " (guessed)" : ""} ({g.count})</option>)}
+            {untagged > 0 && <option value={UNTAGGED}>No genre yet ({untagged})</option>}
           </select>
         )}
       </div>

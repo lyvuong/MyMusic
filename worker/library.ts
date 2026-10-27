@@ -4,12 +4,16 @@ export interface TrackRow {
   id: string; source: "r2" | "nas"; title: string; artist: string; album: string; duration: number;
   track_no: number; art_key: string | null; size: number; etag: string; mime: string; updated_at: number; deleted: number; ai: number;
   genre: string;
+  /** From the browse queries: the genre by tag or set for the artist, and the artist's guessed one. */
+  real_genre?: string;
+  guess?: string;
 }
 
 export const toTrack = (r: TrackRow): Track => ({
   id: r.id, source: r.source, title: r.title, artist: r.artist, album: r.album, duration: r.duration,
   trackNo: r.track_no, hasArt: !!r.art_key, size: r.size, etag: r.etag, mime: r.mime,
-  updatedAt: r.updated_at, deleted: !!r.deleted, ai: !!r.ai, genre: r.genre ?? "",
+  updatedAt: r.updated_at, deleted: !!r.deleted, ai: !!r.ai, genre: r.real_genre ?? r.genre ?? "",
+  ...(r.guess ? { genreGuess: r.guess } : {}),
 });
 
 /**

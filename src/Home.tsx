@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { genreValue, UNTAGGED } from "../shared/genres";
 import type { HomeData, MixInfo, Track } from "../shared/types";
 import { api } from "./api";
 import { AlbumCard, groupAlbums, songCount } from "./browse";
@@ -187,7 +188,12 @@ export function Home({ lib, isOwner, go }: { lib: Library; isOwner: boolean; go:
             <section>
               <h2>Genres</h2>
               <div className="seg wrap">
-                {data.genres.slice(0, 24).map((g) => <button key={g.name} onClick={() => go({ genre: g.name })}>{g.name} <small>{g.count}</small></button>)}
+                {data.genres.slice(0, 24).map((g) => (
+                  <button key={`${g.guessed ? "~" : ""}${g.name}`} className={g.guessed ? "guessed" : undefined} title={g.guessed ? "Guessed from the artist, not in the song files" : undefined} onClick={() => go({ genre: genreValue(g) })}>
+                    {g.name}{g.guessed ? " (guessed)" : ""} <small>{g.count}</small>
+                  </button>
+                ))}
+                {data.untagged > 0 && <button className="guessed" onClick={() => go({ genre: UNTAGGED })}>No genre yet <small>{data.untagged}</small></button>}
               </div>
             </section>
           )}

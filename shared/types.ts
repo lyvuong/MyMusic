@@ -14,8 +14,10 @@ export interface Track {
   deleted: boolean;
   /** Made by AI (shown with a badge). */
   ai: boolean;
-  /** From the file's tags (NAS songs); empty when unknown. */
+  /** From the file's tags (NAS songs) or set for the artist; empty when unknown. */
   genre: string;
+  /** The artist's genre as the app worked it out, only when `genre` is empty: shown marked as a guess. */
+  genreGuess?: string;
 }
 
 export interface Playlist {
@@ -128,7 +130,10 @@ export interface HomeData {
   lists: { popular: string[]; top: string[]; rediscover: string[] };
   /** The songs that mixes and lists refer to. */
   tracks: Track[];
-  genres: { name: string; count: number }[];
+  /** `guessed`: the artist's genre was worked out by the app, not read from the songs. */
+  genres: { name: string; count: number; guessed?: boolean }[];
+  /** Songs with no genre, not even a guessed one. */
+  untagged: number;
   songs: number;
   /** Uploaded songs whose cover was never looked up. */
   missingCovers: number;

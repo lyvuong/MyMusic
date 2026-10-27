@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { fillGenres } from "./genres";
+import { fillGenres, setArtistGenre } from "./genres";
 import { loadRows } from "./suggest";
 
 /** The real schema in an in-memory SQLite behind the small part of D1's API the code uses. */
@@ -92,5 +92,20 @@ describe("fillGenres", () => {
     song(sql, "D", "Band");
     await fillGenres({ DB: db } as unknown as Env, "f");
     expect((await loadRows({ DB: db } as unknown as Env, "f", "u")).find((x) => x.id === own)!.genre).toBe("Jazz");
+  });
+});
+
+describe("setArtistGenre", () => {
+  it("sets a genre as the user's own (not overwritten by the app) and clears it when empty", async () => {
+    const { sql, db } = setup();
+    song(sql, "A", "Band");
+    sql.prepare("INSERT INTO family_cache (family_id, key, json, built_at) VALUES ('f', 'genres', '[]', 1)").run();
+    await setArtistGenre(db, "f", "Band", "vietnamese pop");
+    expect(sql.prepare("SELECT genre, source FROM artist_genres WHERE artist = 'Band'").get()).toMatchObject({ genre: "Vietnamese Pop", source: "user" });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM family_cache WHERE key = 'genres'").get()).toMatchObject({ n: 0 });
+    await fillGenres({ DB: db } as unknown as Env, "f");
+    expect(sql.prepare("SELECT source FROM artist_genres WHERE artist = 'Band'").get()).toMatchObject({ source: "user" });
+    await setArtistGenre(db, "f", "Band", "");
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM artist_genres").get()).toMatchObject({ n: 0 });
   });
 });
