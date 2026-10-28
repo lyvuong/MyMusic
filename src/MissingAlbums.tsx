@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Track } from "../shared/types";
 import { api } from "./api";
 import { usePlayer } from "./player";
@@ -11,6 +11,8 @@ interface Row { track: Song; guesses: Guess[]; /** index of the chosen guess, -1
 const SURE = 0.95;
 /** Suggestions are shown a dozen at a time so each batch is easy to go through. */
 const PAGE = 12;
+/** One press of "Find albums online now" looks up this many songs, so a short visit still gets somewhere. */
+const LOOKUP = 12;
 const titleDiffers = (g: Guess | undefined, t: Song) => !!g?.title && g.title !== t.title;
 const artistDiffers = (g: Guess | undefined, t: Song) => !!g?.artist && g.artist !== t.artist;
 const names = (g: Guess | undefined, t: Song) => ({
@@ -34,6 +36,8 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
   const [none, setNone] = useState(0);
   const [bySure, setBySure] = useState(false);
   const [page, setPage] = useState(0);
+  /** Songs already looked up since this page opened, so the next press moves on to new ones. */
+  const tried = useRef(new Set<string>());
   const player = usePlayer();
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
 
@@ -57,9 +61,14 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
     setBusy(true);
     setSoundNote("");
     let missing: { id: string; title: string; artist: string; duration: number }[];
+    let left = 0;
     try {
       setMsg("Finding songs without an album…");
-      missing = (await api.albumsMissing()).items;
+      const have = new Set(rows.map((r) => r.track.id));
+      const todo = (await api.albumsMissing()).items.filter((t) => !have.has(t.id) && !tried.current.has(t.id));
+      missing = todo.slice(0, LOOKUP);
+      left = todo.length - missing.length;
+      missing.forEach((t) => tried.current.add(t.id));
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Could not load the library");
       setBusy(false);
@@ -82,9 +91,10 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
         found.length
           ? `${found.length} of ${missing.length} songs have a suggested album. Check each one, then apply.`
           : missing.length
-            ? `No album found online for the ${missing.length} songs without one.`
-            : "Every song has an album.",
+            ? `No album found online for these ${missing.length} songs.`
+            : "No more songs to look up.",
       );
+      if (missing.length && left > 0) setMsg((m) => `${m} ${left} more without an album: press the button again for the next ${Math.min(left, LOOKUP)}.`);
     } catch (e) {
       setMsg(`${e instanceof Error ? e.message : "The lookup failed"} (${found.length} found before that).`);
     }
@@ -184,7 +194,7 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
         AcoustID) when it is on the home server, then suggests the albums with a confidence for each. The server also does this
         every night and keeps the suggestions here. Nothing changes until you confirm.{missingCount ? ` ${missingCount} songs here have no album.` : ""}
       </p>
-      <p><button onClick={() => void find()} disabled={busy}>Find albums online now</button></p>
+      <p><button onClick={() => void find()} disabled={busy}>Find albums online now</button> <span className="muted">(12 songs at a time)</span></p>
       <label className="albumfind-opt">
         <input type="checkbox" checked={auto} disabled={busy} onChange={(e) => void toggleAuto(e.target.checked)} />
         <span className="grow">Apply automatically at night when two sources agree at 95% or more (otherwise it only suggests)</span>
