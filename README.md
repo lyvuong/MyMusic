@@ -89,6 +89,8 @@ A small Python service (`scripts/unraid/mymusic-api/`, entry point `server.py`, 
 | `POST /cover` | Writes an album's cover image as `cover.jpg` into the folders of its songs (what Navidrome looks for first) and records it in the Beets library |
 | `POST /yt-info` | Reads a YouTube link's title, artist and length with yt-dlp, without downloading it |
 | `POST /yt-playlist` | Lists the videos of a YouTube / YouTube Music playlist (`--flat-playlist`, up to 500, private and deleted ones skipped); the app then looks them up 25 at a time |
+
+Songs added from a pasted YouTube playlist also go into a MyMusic playlist of the same name (editable; blank for none). The request waits in `pending_playlist` (migration `0025`) and the next library sync adds each song by title + artist, creating the playlist when it does not exist (`worker/ytplaylist.ts`).
 | `POST /jobs` | Starts an `import`, an `enrich` or a `youtube` download and returns at once; progress and result are posted back to the Worker (`/api/beets/agent/progress` and `/report`) under the run id |
 
 There is **no fallback**: if the server cannot be reached, the app disables Organize, enrich and name editing and shows the reason (checked on load, every minute and when the window gets focus). One import, one enrich and up to `MAX_YT` (3) YouTube downloads may be active together; they take turns on the library lock (an import holds it for its whole run, an enrich for one chunk at a time, and it yields to waiting imports); edits wait up to 10 seconds for the library lock and are otherwise refused. A run that never reports back (server died) is marked failed after 2 hours (4 for enrich). The `/api/beets/agent/*` endpoints on the Worker skip Firebase sign-in and are protected only by the `X-Agent-Key` header, so keep the key secret.
@@ -220,6 +222,10 @@ Each edit is sent to the home server API first, which writes the tags into the f
 - Songs uploaded to the app (not on the NAS) have no file on the server, so only the app's copy changes.
 - Tags are written as the Beets config says (`id3v23` for ID3v2.3 with UTF-16, as the Mp3tag note above requires). Log: `/mnt/user/appdata/beets/tag-edits.log`.
 - The phone gets the new names on its next sync.
+
+### YouTube playlists
+
+Songs added from a pasted YouTube playlist also go into a MyMusic playlist of the same name (editable; blank for none). The request waits in `pending_playlist` (migration `0025`) and the next library sync adds each song by title + artist, creating the playlist when it does not exist (`worker/ytplaylist.ts`).
 
 ### Album covers
 

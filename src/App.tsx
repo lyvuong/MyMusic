@@ -1086,6 +1086,8 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
   // A pasted playlist is read once; its songs are looked up a batch at a time so the list stays short to check.
   const [ytMore, setYtMore] = useState<string[]>([]);
   const [ytPlaylist, setYtPlaylist] = useState("");
+  /** The MyMusic playlist the songs of a pasted YouTube playlist join; blank adds them to the library only. */
+  const [ytListName, setYtListName] = useState("");
   const patchRow = (url: string, patch: Partial<YtRow>) => setYtRows((rows) => rows.map((r) => (r.url === url ? { ...r, ...patch } : r)));
   const lookUp = async (links?: string[]) => {
     let urls = [...new Set((links ?? ytText.split(/\s+/)).filter(Boolean))];
@@ -1095,6 +1097,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
       try {
         const pl = await api.youtubePlaylist(urls[0]!);
         urls = pl.items.map((i) => i.url);
+        setYtListName(pl.title || "");
         setYtPlaylist(`${pl.title || "Playlist"}: ${urls.length} songs${pl.skipped ? ` (${pl.skipped} private or deleted skipped)` : ""}`);
       } catch (e) {
         setYtErr(e instanceof Error ? e.message : "Could not read that playlist");
@@ -1103,6 +1106,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
       }
     } else if (!links) {
       setYtPlaylist("");
+      setYtListName("");
     }
     setYtMore(urls.slice(YT_BATCH));
     urls = urls.slice(0, YT_BATCH);
@@ -1137,7 +1141,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
         continue;
       }
       try {
-        const run = await api.importYoutube({ url: r.url, title: r.title, artist: r.artist, album: r.album, ai: r.ai });
+        const run = await api.importYoutube({ url: r.url, title: r.title, artist: r.artist, album: r.album, ai: r.ai, ...(ytListName.trim() ? { playlist: ytListName.trim() } : {}) });
         started.push(run.id);
       } catch (e) {
         left.push({ ...r, error: e instanceof Error ? e.message : "Failed" });
@@ -1208,6 +1212,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
               setYtRows([]);
               setYtMore([]);
               setYtPlaylist("");
+              setYtListName("");
             }}
           />
           {ytRows.length === 0 && (
@@ -1249,10 +1254,18 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
               <button type="submit" className="primary" disabled={ytBusy || down || !ytRows.some(usable)}>
                 Add {ytRows.filter(usable).length > 1 ? `${ytRows.filter(usable).length} songs` : "to library"}
               </button>{" "}
-              <button type="button" className="link" disabled={ytBusy} onClick={() => { setYtRows([]); setYtText(""); setYtMore([]); setYtPlaylist(""); }}>Start over</button>
+              <button type="button" className="link" disabled={ytBusy} onClick={() => { setYtRows([]); setYtText(""); setYtMore([]); setYtPlaylist(""); setYtListName(""); }}>Start over</button>
             </p>
           )}
-          {ytPlaylist && <p><small className="muted">{ytPlaylist}. Showing {YT_BATCH} at a time.</small></p>}
+          {ytPlaylist && (
+            <>
+              <p><small className="muted">{ytPlaylist}. Showing {YT_BATCH} at a time.</small></p>
+              <label>
+                Also add the songs to a playlist called{" "}
+                <input value={ytListName} maxLength={100} placeholder="(none)" disabled={ytBusy} onChange={(e) => setYtListName(e.target.value)} />
+              </label>
+            </>
+          )}
           {ytMore.length > 0 && !ytBusy && (
             <p>
               <button type="button" className="link" onClick={() => void lookUp(ytMore)}>

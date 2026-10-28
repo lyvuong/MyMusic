@@ -9,6 +9,7 @@ import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
+import { queueForPlaylist } from "./ytplaylist";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, homeYoutubePlaylist, type TagOp } from "./home";
 import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
@@ -746,7 +747,7 @@ app.post("/api/beets/youtube/playlist", async (c) => {
 app.post("/api/beets/youtube", async (c) => {
   const denied = youtubeOwner(c);
   if (denied) return denied;
-  const b = await c.req.json<{ url?: string; title?: string; artist?: string; album?: string; ai?: boolean }>().catch(() => ({}) as Record<string, undefined>);
+  const b = await c.req.json<{ url?: string; title?: string; artist?: string; album?: string; ai?: boolean; playlist?: string }>().catch(() => ({}) as Record<string, undefined>);
   const url = typeof b.url === "string" ? b.url.trim() : "";
   const title = typeof b.title === "string" ? b.title.trim().slice(0, 200) : "";
   const artist = typeof b.artist === "string" ? b.artist.trim().slice(0, 200) : "";
@@ -763,6 +764,9 @@ app.post("/api/beets/youtube", async (c) => {
     await c.env.DB.prepare("INSERT INTO pending_ai (family_id, title, artist, created_at) VALUES (?, ?, ?, ?)")
       .bind(fam, title.normalize("NFC"), artist.normalize("NFC"), Date.now()).run();
   }
+  // A song from a YouTube playlist joins a MyMusic playlist of the same name once the sync has put it in the library.
+  const playlist = typeof b.playlist === "string" ? b.playlist.trim().slice(0, 100) : "";
+  if (playlist) await queueForPlaylist(c.env.DB, fam, c.get("user").uid, playlist, title, artist);
   await dispatchQueued(c.env);
   const now = (await getRun(c.env.DB, run.id)) ?? run;
   if (now.status === "failed") return c.json({ error: now.log || "Could not start the job" }, 502);

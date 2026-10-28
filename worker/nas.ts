@@ -1,4 +1,5 @@
 import { clearLibraryCache } from "./browse";
+import { applyPendingPlaylists } from "./ytplaylist";
 /**
  * Navidrome / Subsonic-API music server (reached through a Cloudflare Tunnel). Tracks synced from it have
  * source = 'nas', source_key = the Subsonic song id and art_key = 'nas:<coverArt id>'; audio and covers are
@@ -169,6 +170,7 @@ export async function finishSync(env: Env, familyId: string, seen: string[]) {
       ).bind(familyId, now - 3 * 86400 * 1000),
     ]);
   }
+  await applyPendingPlaylists(env.DB, familyId);
   await clearLibraryCache(env.DB, familyId);
   return { removed, skippedRemoval: suspicious ? gone.length : 0 };
 }
