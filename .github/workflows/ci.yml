@@ -99,11 +99,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - name: Did the API change?
         id: changed
+        # Compared with what the branch held before this push (several commits can arrive together), not just the last commit.
         run: |
-          if git diff --quiet HEAD^ HEAD -- scripts/unraid/mymusic-api ':!scripts/unraid/mymusic-api/tests'; then
+          base="${{ github.event.before }}"
+          git cat-file -e "$base^{commit}" 2>/dev/null || base=HEAD^
+          if git diff --quiet "$base" HEAD -- scripts/unraid/mymusic-api ':!scripts/unraid/mymusic-api/tests'; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
