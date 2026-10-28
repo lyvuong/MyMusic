@@ -49,13 +49,20 @@ export function mergeGuesses(online: AlbumGuess[], sound: AlbumGuess[]): AlbumGu
 const norm = (s: string) =>
   s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/\(.*?\)|\[.*?\]/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
-/** 1 for the same name, 0.7 when one contains the other, 0 otherwise. */
+/** 1 for the same name, 0.7 when one contains the other as whole words, 0 otherwise. */
 function nameScore(a: string, b: string): number {
   const x = norm(a), y = norm(b);
   if (!x || !y) return 0;
   if (x === y) return 1;
-  return x.includes(y) || y.includes(x) ? 0.7 : 0;
+  return ` ${x} `.includes(` ${y} `) || ` ${y} `.includes(` ${x} `) ? 0.7 : 0;
 }
+
+/** Another take of the song (a live recording, a cover, a karaoke backing) rather than the release the file is from. */
+const OTHER_TAKE = /\b(live|karaoke|tribute|covers?|remix|instrumental|acoustic|demo|playalongs?|made famous|originally performed|in the style of|sessions?)\b/i;
+const otherTake = (h: Hit, title: string) => {
+  const m = `${h.track} ${h.album} ${h.artist}`.match(OTHER_TAKE);
+  return !!m && !new RegExp(`\\b${m[1]}\\b`, "i").test(title);
+};
 
 const COMPILATION = /\b(greatest hits|best of|the best|hits|collection|compilation|now that|anthology|essential|playlist|top \d+|nhac)\b/i;
 
@@ -63,7 +70,7 @@ const COMPILATION = /\b(greatest hits|best of|the best|hits|collection|compilati
 export function scoreAlbums(hits: Hit[], artist: string, title: string, seconds = 0): AlbumGuess[] {
   const by = new Map<string, { album: string; artist: string; match: number; near: boolean; far: boolean; sources: Set<string> }>();
   for (const h of hits) {
-    if (!h.album) continue;
+    if (!h.album || otherTake(h, title)) continue;
     const t = nameScore(h.track, title);
     const a = nameScore(h.artist, artist);
     if (t === 0 || a === 0) continue;
@@ -79,13 +86,15 @@ export function scoreAlbums(hits: Hit[], artist: string, title: string, seconds 
     }
     by.set(key, e);
   }
+  // Discogs cannot say which track matched, so it only backs up an album one of the other catalogues also lists.
+  for (const [key, e] of by) if (!e.sources.has("iTunes") && !e.sources.has("Deezer")) by.delete(key);
   const out: AlbumGuess[] = [];
   for (const e of by.values()) {
-    // A perfect name match alone is 82%; a second catalogue and a fitting length are what take it higher.
-    let c = e.match * 0.82;
+    // A perfect name match in one catalogue is 75%; a second catalogue and a fitting length are what take it higher.
+    let c = e.match * 0.75;
     if (e.sources.size > 1) c += 0.1 + (e.sources.size > 2 ? 0.05 : 0);
     if (e.near) c += 0.08;
-    else if (e.far) c -= 0.1;
+    else if (e.far) c -= 0.25;
     if (COMPILATION.test(e.album)) c -= 0.15;
     c = Math.min(0.98, Math.max(0, c));
     if (c >= 0.4) out.push({ album: e.album, artist: e.artist, confidence: Math.round(c * 100) / 100, sources: [...e.sources] });

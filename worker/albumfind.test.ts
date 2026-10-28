@@ -16,7 +16,16 @@ describe("scoreAlbums", () => {
   it("lowers compilations and matches without accents", () => {
     const r = scoreAlbums([hit("iTunes", "Greatest Hits", "Còn Yêu Em Mãi", "Khánh Ly"), hit("iTunes", "Tình Ca", "Còn Yêu Em Mãi", "Khánh Ly")], "Khanh Ly", "Con Yeu Em Mai");
     expect(r[0]!.album).toBe("Tình Ca");
-    expect(r[0]!.confidence).toBe(0.82);
+    expect(r[0]!.confidence).toBe(0.75);
+  });
+  it("skips live, tribute and karaoke takes, and Discogs alone", () => {
+    const r = scoreAlbums([
+      hit("iTunes", "Live 1978-1992", "Sultans of Swing (Live at the Rainbow)", "Dire Straits"),
+      hit("iTunes", "A Tribute To Dire Straits", "Sultans of Swing", "Dire Straits"),
+      hit("Discogs", "Are You Shakespearienced?", "Sultans of Swing", "Dire Straits"),
+      hit("iTunes", "Dire Straits", "Sultans of Swing", "Dire Straits"),
+    ], "Dire Straits", "Sultans of Swing");
+    expect(r.map((g) => g.album)).toEqual(["Dire Straits"]);
   });
 });
 
