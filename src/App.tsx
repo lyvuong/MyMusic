@@ -1015,10 +1015,14 @@ interface YtRow {
   artist: string;
   album: string;
   ai: boolean;
+  /** Unticked by the owner: left out when the rest are added. */
+  skip: boolean;
 }
 
 /** Why none of the looked-up links can be added yet, for the line under the form. */
-function ytHint(rows: YtRow[]): string {
+function ytHint(all: YtRow[]): string {
+  const rows = all.filter((r) => !r.skip);
+  if (!rows.length) return "Every song is unticked; tick the ones to add.";
   const pending = rows.filter((r) => !r.info && !r.error).length;
   if (pending) return `${pending} link${pending === 1 ? " is" : "s are"} still being looked up.`;
   const tooLong = rows.filter((r) => r.info?.tooLong).length;
@@ -1105,7 +1109,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
     if (!urls.length) return;
     setYtBusy(true);
     setYtErr("");
-    setYtRows(urls.map((url) => ({ url, info: null, error: "", title: "", artist: "", album: "", ai: false })));
+    setYtRows(urls.map((url) => ({ url, info: null, error: "", title: "", artist: "", album: "", ai: false, skip: false })));
     const queue = [...urls];
     const worker = async () => {
       for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
@@ -1120,13 +1124,14 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
     await Promise.all([worker(), worker(), worker()]);
     setYtBusy(false);
   };
-  const usable = (r: YtRow) => r.info !== null && !r.info.tooLong && r.title.trim() !== "" && r.artist.trim() !== "";
+  const usable = (r: YtRow) => !r.skip && r.info !== null && !r.info.tooLong && r.title.trim() !== "" && r.artist.trim() !== "";
   const addAll = async () => {
     setYtBusy(true);
     setYtErr("");
     const left: YtRow[] = [];
     const started: string[] = [];
     for (const r of ytRows) {
+      if (r.skip) continue;
       if (!usable(r)) {
         left.push(r);
         continue;
@@ -1182,7 +1187,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
 
       <section className="tool">
         <h3>Add songs from YouTube</h3>
-        <p className="muted">Paste one link per line, or one playlist link (its songs are shown 25 at a time). Check the names, then add them. Songs are downloaded and added to the library for you.</p>
+        <p className="muted">Paste one link per line, or one playlist link (its songs are shown 25 at a time). Check the names, untick any you do not want, then add them. Songs are downloaded and added to the library for you.</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -1210,10 +1215,15 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
           )}
           {ytRows.map((r) => (
             <fieldset key={r.url}>
-              <legend><small className="muted">{r.url}</small></legend>
-              {r.error && <p className="error" role="alert">{r.error}</p>}
-              {!r.info && !r.error && <p><small className="muted">Looking up…</small></p>}
-              {r.info && (
+              <legend>
+                <label>
+                  <input type="checkbox" checked={!r.skip} disabled={ytBusy} onChange={(e) => patchRow(r.url, { skip: !e.target.checked })} />{" "}
+                  <small className={r.skip ? "muted" : ""}>{r.skip ? "Not adding " : ""}{r.info ? `${r.artist} – ${r.title}` : r.url}</small>
+                </label>
+              </legend>
+              {!r.skip && r.error && <p className="error" role="alert">{r.error}</p>}
+              {!r.skip && !r.info && !r.error && <p><small className="muted">Looking up…</small></p>}
+              {!r.skip && r.info && (
                 <>
                   <div className="yt-fields">
                     <label>Title <input value={r.title} onChange={(e) => patchRow(r.url, { title: e.target.value })} /></label>
