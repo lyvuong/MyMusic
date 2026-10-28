@@ -9,6 +9,8 @@ interface Row { track: Song; guesses: Guess[]; /** index of the chosen guess, -1
 
 /** A guess this sure also corrects the title and artist by default, when they differ. */
 const SURE = 0.95;
+/** Suggestions are shown a dozen at a time so each batch is easy to go through. */
+const PAGE = 12;
 const titleDiffers = (g: Guess | undefined, t: Song) => !!g?.title && g.title !== t.title;
 const artistDiffers = (g: Guess | undefined, t: Song) => !!g?.artist && g.artist !== t.artist;
 const names = (g: Guess | undefined, t: Song) => ({
@@ -31,6 +33,7 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
   const [auto, setAuto] = useState(false);
   const [none, setNone] = useState(0);
   const [bySure, setBySure] = useState(false);
+  const [page, setPage] = useState(0);
   const player = usePlayer();
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
 
@@ -90,9 +93,12 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
   };
 
   const top = (r: Row) => r.guesses[0]?.confidence ?? 0;
-  const shown = bySure ? [...rows].sort((a, b) => top(b) - top(a)) : rows;
-  const chosen = rows.filter((r) => r.pick >= 0);
-  const skipped = rows.filter((r) => r.pick < 0);
+  const sorted = bySure ? [...rows].sort((a, b) => top(b) - top(a)) : rows;
+  const pages = Math.max(1, Math.ceil(sorted.length / PAGE));
+  const at = Math.min(page, pages - 1);
+  const shown = sorted.slice(at * PAGE, (at + 1) * PAGE);
+  const chosen = shown.filter((r) => r.pick >= 0);
+  const skipped = shown.filter((r) => r.pick < 0);
 
   const apply = async () => {
     setBusy(true);
@@ -189,10 +195,10 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
       {rows.length > 0 && (
         <>
           <p className="fixv-bar">
-            <strong>{rows.length} suggestions · {chosen.length} selected</strong>
-            <button className="link" onClick={() => setBySure((v) => !v)}>{bySure ? "Sort by artist" : "Sort by confidence"}</button>
+            <strong>{rows.length} suggestions · showing {at * PAGE + 1}–{at * PAGE + shown.length} · {chosen.length} selected</strong>
+            <button className="link" onClick={() => { setBySure((v) => !v); setPage(0); }}>{bySure ? "Sort by artist" : "Sort by confidence"}</button>
             {chosen.length > 0 && (
-              <button className="link" disabled={busy} onClick={() => setRows((rs) => rs.map((r) => ({ ...r, pick: -1 })))}>Set all to “none of these”</button>
+              <button className="link" disabled={busy} onClick={() => setRows((rs) => rs.map((r) => (shown.includes(r) ? { ...r, pick: -1 } : r)))}>Set these to “none of these”</button>
             )}
             {skipped.length > 0 && <button className="link" disabled={busy} onClick={() => void dismiss()}>Never suggest the {skipped.length} marked “none”</button>}
             <button className="primary" disabled={busy || chosen.length === 0} onClick={() => void apply()}>Apply {chosen.length} albums</button>
@@ -244,6 +250,13 @@ export function MissingAlbums({ tracks, refresh }: { tracks: Track[]; refresh: (
               );
             })}
           </ul>
+          {pages > 1 && (
+            <p className="fixv-bar">
+              <button disabled={busy || at === 0} onClick={() => setPage(at - 1)}>Previous {PAGE}</button>
+              <span className="muted">Batch {at + 1} of {pages}</span>
+              <button disabled={busy || at >= pages - 1} onClick={() => setPage(at + 1)}>Next {PAGE}</button>
+            </p>
+          )}
         </>
       )}
     </section>
