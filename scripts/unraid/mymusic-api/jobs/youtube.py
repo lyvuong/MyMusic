@@ -36,6 +36,21 @@ def clean_url(url):
     return url if ok else None
 
 
+def clean_playlist_url(url):
+    """The link when it is a YouTube / YouTube Music playlist page (youtube.com/playlist?list=...), else None."""
+    if not isinstance(url, str) or len(url) > 300 or any(c.isspace() or ord(c) < 32 for c in url):
+        return None
+    try:
+        u = urllib.parse.urlsplit(url)
+    except ValueError:
+        return None
+    host = (u.hostname or "").lower()
+    if u.scheme != "https" or host not in YT_HOSTS - {"youtu.be"} or u.username or u.password or u.path != "/playlist":
+        return None
+    lst = urllib.parse.parse_qs(u.query).get("list")
+    return "https://%s/playlist?list=%s" % (host, lst[0]) if lst and re.match(r"^[\w-]{10,60}$", lst[0]) else None
+
+
 def clean_tag(value, limit=200):
     s = "".join(c for c in str(value or "") if c >= " " and c != "\x7f")
     return re.sub(r"\s+", " ", s).strip()[:limit]
@@ -139,6 +154,40 @@ def yt_info(url):
         "aiLabel": yt_ai_label(url),
         "aiHint": bool(AI_HINT.search(" ".join([str(d.get("title") or ""), str(d.get("description") or "")[:3000], " ".join(str(x) for x in (d.get("tags") or []))]))),
     }
+
+
+YT_PLAYLIST_MAX = 500
+
+
+def yt_playlist(url):
+    """Lists the videos of a playlist without downloading anything. Returns (status, body)."""
+    try:
+        r = subprocess.run(
+            config.DOCKER + ["exec", config.YTDLP, "yt-dlp"] + config.YTDLP_ARGS + ["--flat-playlist", "--dump-single-json", "--no-warnings", "--playlist-end", str(YT_PLAYLIST_MAX), "--", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return 504, {"error": "YouTube did not answer in time. Try again."}
+    except OSError as e:
+        return 503, {"error": "Cannot run docker: %s" % e}
+    if r.returncode != 0:
+        last = (r.stderr.strip().splitlines() or ["no output"])[-1]
+        return 502, {"error": "Could not read that playlist: %s" % last[:300]}
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        return 502, {"error": "yt-dlp returned something unreadable."}
+    items, skipped = [], 0
+    for e in (d.get("entries") or []) if isinstance(d, dict) else []:
+        vid = e.get("id") if isinstance(e, dict) else None
+        title = clean_tag(e.get("title")) if isinstance(e, dict) else ""
+        if not isinstance(vid, str) or not re.match(r"^[\w-]{6,20}$", vid) or title.lower() in ("[private video]", "[deleted video]"):
+            skipped += 1
+            continue
+        items.append({"url": "https://www.youtube.com/watch?v=" + vid, "title": title, "duration": int(e.get("duration") or 0)})
+    if not items:
+        return 404, {"error": "No videos found in that playlist (is it private?)."}
+    return 200, {"title": clean_tag(d.get("title")), "items": items, "skipped": skipped}
 
 
 def mp3s_in(folder):

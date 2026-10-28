@@ -9,7 +9,7 @@ import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
-import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, type TagOp } from "./home";
+import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, homeYoutubePlaylist, type TagOp } from "./home";
 import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
 import { recordPlays, recordSkips, popular } from "./plays";
@@ -723,6 +723,19 @@ app.post("/api/beets/youtube/info", async (c) => {
     return c.json(await homeYoutubeInfo(c.env, url.trim()));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : "Could not read that link" }, 502);
+  }
+});
+
+/** Lists the videos of a YouTube / YouTube Music playlist (owner only); the app then looks each one up as usual. */
+app.post("/api/beets/youtube/playlist", async (c) => {
+  const denied = youtubeOwner(c);
+  if (denied) return denied;
+  const { url } = await c.req.json<{ url?: string }>().catch(() => ({ url: undefined }));
+  if (typeof url !== "string" || !url.trim() || url.length > 300) return c.json({ error: "Paste a playlist link." }, 400);
+  try {
+    return c.json(await homeYoutubePlaylist(c.env, url.trim()));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "Could not read that playlist" }, 502);
   }
 });
 

@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import config  # noqa: E402
 from jobs import JOBS  # noqa: E402
-from jobs.youtube import ai_label_in, clean_tag, clean_url, tidy_title  # noqa: E402
+from jobs.youtube import ai_label_in, clean_playlist_url, clean_tag, clean_url, tidy_title  # noqa: E402
 
 
 class CleanUrl(unittest.TestCase):
@@ -20,6 +20,17 @@ class CleanUrl(unittest.TestCase):
         for url in ("http://youtu.be/abc123", "https://youtube.com/playlist?list=x", "https://evil.example/watch?v=1",
                     "https://youtu.be/abc 123", "https://user:pw@youtu.be/abc", None, 5):
             self.assertIsNone(clean_url(url), url)
+
+
+class CleanPlaylistUrl(unittest.TestCase):
+    def test_accepts_playlist_pages_and_drops_other_query_parts(self):
+        self.assertEqual(clean_playlist_url("https://music.youtube.com/playlist?list=PLabcdefghijk&si=zz"), "https://music.youtube.com/playlist?list=PLabcdefghijk")
+        self.assertEqual(clean_playlist_url("https://www.youtube.com/playlist?list=OLAK5uy_abcdefghij"), "https://www.youtube.com/playlist?list=OLAK5uy_abcdefghij")
+
+    def test_rejects_videos_and_other_hosts(self):
+        for url in ("https://youtu.be/abc123", "https://www.youtube.com/watch?v=abc123&list=PLabcdefghijk", "https://evil.example/playlist?list=PLabcdefghijk",
+                    "http://www.youtube.com/playlist?list=PLabcdefghijk", "https://www.youtube.com/playlist", None):
+            self.assertIsNone(clean_playlist_url(url), url)
 
 
 class RunId(unittest.TestCase):

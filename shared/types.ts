@@ -77,6 +77,13 @@ export interface BeetsRun {
 }
 
 /** What the home server read from a YouTube link, to be confirmed or edited before the audio is downloaded. */
+export interface YoutubePlaylist {
+  title: string;
+  items: { url: string; title: string; duration: number }[];
+  /** Private or deleted videos left out. */
+  skipped: number;
+}
+
 export interface YoutubeInfo {
   title: string;
   artist: string;

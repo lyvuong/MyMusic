@@ -1,4 +1,4 @@
-import type { BeetsRun, BrowsePage, FamilyInfo, HomeData, Playlist, ServerStatus, Suggestion, TasteProfile, Track, YoutubeInfo } from "../shared/types";
+import type { BeetsRun, BrowsePage, FamilyInfo, HomeData, Playlist, ServerStatus, Suggestion, TasteProfile, Track, YoutubeInfo, YoutubePlaylist } from "../shared/types";
 import { auth } from "./firebase";
 
 export class ApiError extends Error {
@@ -89,6 +89,7 @@ export const api = {
   runBeets: () => call<BeetsRun>("POST", "/api/beets/run"),
   runEnrich: () => call<BeetsRun>("POST", "/api/beets/enrich"),
   youtubeInfo: (url: string) => call<YoutubeInfo>("POST", "/api/beets/youtube/info", { url }),
+  youtubePlaylist: (url: string) => call<YoutubePlaylist>("POST", "/api/beets/youtube/playlist", { url }),
   importYoutube: (v: { url: string; title: string; artist: string; album: string; ai: boolean }) => call<BeetsRun>("POST", "/api/beets/youtube", v),
   ratings: () => call<{ ratings: Record<string, number> }>("GET", "/api/ratings"),
   rateTrack: (id: string, rating: number) => call<void>("PUT", `/api/ratings/${id}`, { rating }),

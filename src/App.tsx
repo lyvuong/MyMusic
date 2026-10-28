@@ -93,6 +93,8 @@ function FamilySetup({ onDone }: { onDone: (f: FamilyInfo) => void }) {
 }
 
 // A YouTube link handed over by the "Add to MyMusic" bookmark (?yt=…): read once, then taken out of the address.
+/** Songs looked up (and shown to check) at a time. */
+const YT_BATCH = 25;
 const incomingYoutube: string | null = (() => {
   try {
     const url = new URLSearchParams(location.search).get("yt");
@@ -1077,9 +1079,29 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
   const [ytRows, setYtRows] = useState<YtRow[]>([]);
   const [ytBusy, setYtBusy] = useState(false);
   const [ytErr, setYtErr] = useState("");
+  // A pasted playlist is read once; its songs are looked up a batch at a time so the list stays short to check.
+  const [ytMore, setYtMore] = useState<string[]>([]);
+  const [ytPlaylist, setYtPlaylist] = useState("");
   const patchRow = (url: string, patch: Partial<YtRow>) => setYtRows((rows) => rows.map((r) => (r.url === url ? { ...r, ...patch } : r)));
   const lookUp = async (links?: string[]) => {
-    const urls = [...new Set((links ?? ytText.split(/\s+/)).filter(Boolean))].slice(0, 20);
+    let urls = [...new Set((links ?? ytText.split(/\s+/)).filter(Boolean))];
+    if (!links && urls.length === 1 && /^https:\/\/[^/]*youtube\.com\/playlist\?/i.test(urls[0]!)) {
+      setYtBusy(true);
+      setYtErr("");
+      try {
+        const pl = await api.youtubePlaylist(urls[0]!);
+        urls = pl.items.map((i) => i.url);
+        setYtPlaylist(`${pl.title || "Playlist"}: ${urls.length} songs${pl.skipped ? ` (${pl.skipped} private or deleted skipped)` : ""}`);
+      } catch (e) {
+        setYtErr(e instanceof Error ? e.message : "Could not read that playlist");
+        setYtBusy(false);
+        return;
+      }
+    } else if (!links) {
+      setYtPlaylist("");
+    }
+    setYtMore(urls.slice(YT_BATCH));
+    urls = urls.slice(0, YT_BATCH);
     if (!urls.length) return;
     setYtBusy(true);
     setYtErr("");
@@ -1117,7 +1139,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
       }
     }
     setYtRows(left);
-    if (!left.length) setYtText("");
+    if (!left.length && !ytMore.length) setYtText("");
     setYtBusy(false);
     if (started.length) {
       await refreshRuns();
@@ -1160,7 +1182,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
 
       <section className="tool">
         <h3>Add songs from YouTube</h3>
-        <p className="muted">Paste one link per line. Check the names, then add them. Songs are downloaded and added to the library for you.</p>
+        <p className="muted">Paste one link per line, or one playlist link (its songs are shown 25 at a time). Check the names, then add them. Songs are downloaded and added to the library for you.</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -1179,6 +1201,8 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
             onChange={(e) => {
               setYtText(e.target.value);
               setYtRows([]);
+              setYtMore([]);
+              setYtPlaylist("");
             }}
           />
           {ytRows.length === 0 && (
@@ -1215,7 +1239,16 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
               <button type="submit" className="primary" disabled={ytBusy || down || !ytRows.some(usable)}>
                 Add {ytRows.filter(usable).length > 1 ? `${ytRows.filter(usable).length} songs` : "to library"}
               </button>{" "}
-              <button type="button" className="link" disabled={ytBusy} onClick={() => { setYtRows([]); setYtText(""); }}>Start over</button>
+              <button type="button" className="link" disabled={ytBusy} onClick={() => { setYtRows([]); setYtText(""); setYtMore([]); setYtPlaylist(""); }}>Start over</button>
+            </p>
+          )}
+          {ytPlaylist && <p><small className="muted">{ytPlaylist}. Showing {YT_BATCH} at a time.</small></p>}
+          {ytMore.length > 0 && !ytBusy && (
+            <p>
+              <button type="button" className="link" onClick={() => void lookUp(ytMore)}>
+                Look up the next {Math.min(ytMore.length, YT_BATCH)} songs ({ytMore.length} left in the playlist)
+              </button>
+              <small className="muted"> · this replaces the list above, so add those first</small>
             </p>
           )}
           {ytRows.length > 0 && !ytBusy && !ytRows.some(usable) && (

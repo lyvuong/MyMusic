@@ -1,4 +1,4 @@
-import type { ServerStatus, YoutubeInfo } from "../shared/types";
+import type { ServerStatus, YoutubeInfo, YoutubePlaylist } from "../shared/types";
 
 /**
  * The API running on the home server (scripts/unraid/mymusic-api). The Worker reaches it through a Cloudflare Tunnel,
@@ -95,6 +95,11 @@ export function homeFingerprint(env: Env, songs: { title: string; artist: string
 /** Starts a long job (an import, an enrich or a YouTube download); the server reports progress and the result to the Worker by run id. */
 export async function homeStartJob(env: Env, id: string, kind: "import" | "enrich" | "youtube", extra: Record<string, string> = {}): Promise<void> {
   await call<{ id: string }>(env, "POST", "/jobs", { ...extra, id, kind }, 15000);
+}
+
+/** Lists the videos of a YouTube playlist without downloading them. */
+export function homeYoutubePlaylist(env: Env, url: string): Promise<YoutubePlaylist> {
+  return call<YoutubePlaylist>(env, "POST", "/yt-playlist", { url }, 130000);
 }
 
 /** Reads a YouTube video's title, artist and length without downloading it (a few seconds). */

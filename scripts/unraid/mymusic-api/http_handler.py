@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler
 import config
 from edit import COVER_PY, do_edit, do_fingerprint
 from jobs import JOBS
-from jobs.youtube import clean_tag, clean_url, yt_info
+from jobs.youtube import clean_playlist_url, clean_tag, clean_url, yt_info, yt_playlist
 from jobs.importer import count_inbox
 from locks import active_jobs, busy_kind, start_job
 from util import log
@@ -100,6 +100,11 @@ class Handler(BaseHTTPRequestHandler):
             if not url:
                 return self.send(400, {"error": "Paste the link of one YouTube video (https://youtu.be/... or youtube.com/watch?v=...)."})
             return self.send(*yt_info(url))
+        if self.path == "/yt-playlist":
+            url = clean_playlist_url(b.get("url"))
+            if not url:
+                return self.send(400, {"error": "Paste a playlist link (youtube.com/playlist?list=...)."})
+            return self.send(*yt_playlist(url))
         if self.path == "/jobs":
             kind, run_id = b.get("kind"), b.get("id")
             if kind not in JOBS or not isinstance(run_id, str) or not config.RUN_ID_RE.match(run_id):
