@@ -9,6 +9,7 @@ import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
+import { recheckAi, rememberSource, setAi, songsWithSource } from "./aisongs";
 import { findDuplicates, resolveDuplicates } from "./duplicates";
 import { addToPlaylist, findInLibrary, queueForPlaylist } from "./ytplaylist";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, homeYoutubePlaylist, type TagOp } from "./home";
@@ -774,6 +775,33 @@ app.post("/api/library/duplicates/resolve", async (c) => {
   return c.json(await resolveDuplicates(c.env, c.get("family").familyId, groups as { keep: string; remove: string[] }[]));
 });
 
+/** The ids of songs whose YouTube link is known, so the AI review can ask YouTube about them (owner only). */
+app.get("/api/library/ai/sources", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  return c.json({ ids: await songsWithSource(c.env.DB, c.get("family").familyId) });
+});
+
+/** Sets or clears the AI badge of up to 200 songs at once (owner only). */
+app.post("/api/library/ai", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  const b = await c.req.json<{ ids?: unknown; ai?: unknown }>().catch(() => ({}) as { ids?: undefined; ai?: undefined });
+  if (!Array.isArray(b.ids) || b.ids.length < 1 || b.ids.length > 200 || !b.ids.every((x) => typeof x === "string") || typeof b.ai !== "boolean") {
+    return c.json({ error: "ids must be 1-200 song ids and ai true or false." }, 400);
+  }
+  return c.json({ changed: await setAi(c.env.DB, c.get("family").familyId, b.ids as string[], b.ai) });
+});
+
+/** Asks YouTube again whether up to 3 songs' videos are labelled as made with AI (owner only; nothing is changed). */
+app.post("/api/library/ai/recheck", async (c) => {
+  const denied = youtubeOwner(c);
+  if (denied) return denied;
+  const b = await c.req.json<{ ids?: unknown }>().catch(() => ({}) as { ids?: undefined });
+  if (!Array.isArray(b.ids) || b.ids.length < 1 || b.ids.length > 3 || !b.ids.every((x) => typeof x === "string")) {
+    return c.json({ error: "ids must be 1-3 song ids." }, 400);
+  }
+  return c.json({ results: await recheckAi(c.env, c.get("family").familyId, b.ids as string[]) });
+});
+
 /** Lists the videos of a YouTube / YouTube Music playlist (owner only); the app then looks each one up as usual. */
 app.post("/api/beets/youtube/playlist", async (c) => {
   const denied = youtubeOwner(c);
@@ -806,6 +834,7 @@ app.post("/api/beets/youtube", async (c) => {
   const fam = c.get("family").familyId;
   const { run, created } = await enqueueYoutube(c.env.DB, fam, c.get("user").uid, { url, title, artist, album });
   if (!created) return c.json(run, 200); // the same link is already queued or downloading
+  await rememberSource(c.env.DB, fam, url, title, artist);
   // The song reaches the library with the next NAS sync; the badge is applied then (worker/nas.ts).
   if (b.ai === true) {
     await c.env.DB.prepare("INSERT INTO pending_ai (family_id, title, artist, created_at) VALUES (?, ?, ?, ?)")

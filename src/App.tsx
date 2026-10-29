@@ -8,6 +8,7 @@ import { AlbumCard, ArtistCard, groupAlbums, groupArtists, Hero, songCount } fro
 import { CoverPick } from "./CoverPick";
 import { EditDialog } from "./EditDialog";
 import { FixVietnamese } from "./FixVietnamese";
+import { AiSongs } from "./AiSongs";
 import { DuplicateSongs } from "./DuplicateSongs";
 import { MissingAlbums } from "./MissingAlbums";
 import { Home, useHome, type Jump } from "./Home";
@@ -821,6 +822,7 @@ function LibraryTools({ lib, home, recheck }: { lib: LibraryState; home: ServerS
         </section>
         <MissingAlbums tracks={tracks} refresh={refresh} />
         <DuplicateSongs refresh={refresh} />
+        <AiSongs tracks={tracks} refresh={refresh} loadAll={lib.loadAll} />
       </div>
       {/* Its own page; kept mounted once opened so the scan and your edits survive going back. */}
       {fixSeen && (

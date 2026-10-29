@@ -1,4 +1,4 @@
-import type { BeetsRun, BrowsePage, FamilyInfo, HomeData, Playlist, ServerStatus, Suggestion, TasteProfile, Track, YoutubeInfo, YoutubePlaylist, DupGroup } from "../shared/types";
+import type { BeetsRun, BrowsePage, FamilyInfo, HomeData, Playlist, ServerStatus, Suggestion, TasteProfile, Track, YoutubeInfo, YoutubePlaylist, DupGroup, AiRecheck } from "../shared/types";
 import { auth } from "./firebase";
 
 export class ApiError extends Error {
@@ -94,6 +94,9 @@ export const api = {
   duplicates: () => call<{ groups: DupGroup[] }>("GET", "/api/library/duplicates"),
   resolveDuplicates: (groups: { keep: string; remove: string[] }[]) =>
     call<{ removed: string[]; failed: { id: string; why: string }[] }>("POST", "/api/library/duplicates/resolve", { groups }),
+  aiSources: () => call<{ ids: string[] }>("GET", "/api/library/ai/sources"),
+  setAi: (ids: string[], ai: boolean) => call<{ changed: number }>("POST", "/api/library/ai", { ids, ai }),
+  recheckAi: (ids: string[]) => call<{ results: AiRecheck[] }>("POST", "/api/library/ai/recheck", { ids }),
   youtubePlaylist: (url: string) => call<YoutubePlaylist>("POST", "/api/beets/youtube/playlist", { url }),
   importYoutube: (v: { url: string; title: string; artist: string; album: string; ai: boolean; playlist?: string }) => call<BeetsRun>("POST", "/api/beets/youtube", v),
   ratings: () => call<{ ratings: Record<string, number> }>("GET", "/api/ratings"),

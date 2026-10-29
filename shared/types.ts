@@ -87,6 +87,9 @@ export interface DupSong {
 /** Copies of one song, with the id of the one suggested to keep. */
 export interface DupGroup { songs: DupSong[]; keep: string }
 
+/** What YouTube said, on asking again, about the video a song came from. */
+export interface AiRecheck { id: string; label: boolean; hint: boolean; error?: string }
+
 export interface YoutubePlaylist {
   title: string;
   items: { url: string; title: string; duration: number }[];
