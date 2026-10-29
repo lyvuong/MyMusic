@@ -16,7 +16,8 @@ interface Env {
   BEETS_AGENT_KEY?: string;
   /** Public URL of the home server API (a Cloudflare Tunnel hostname). Empty = Beets features disabled. */
   HOME_API_URL?: string;
-  /** YouTube downloads started on the home server at once (default 3; the server's own MAX_YT must be as high). */
+  /** YouTube downloads started on the home server at once (default 3; the server's own MAX_YT must be as high). Set in the dashboard
+   * as a Secret-type variable, not in wrangler.jsonc: a deploy rewrites plain variables from that file but leaves secrets alone. */
   MAX_YOUTUBE?: string;
   /** Workers AI binding (free daily allowance); suggestions are disabled without it. */
   /** Cloudflare Images binding: resizes covers for the car. Without it the original cover is served. */
