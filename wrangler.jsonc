@@ -28,7 +28,9 @@
 		"NAS_BASE_URL": "https://navidrome.lv5.uk",
 		// The home server API (scripts/unraid/mymusic-api) behind a Cloudflare Tunnel; protected by the same Access service token.
 		// Empty = import, enrich and name editing are disabled in the app.
-		"HOME_API_URL": "https://mymusic-api.lv5.uk"
+		"HOME_API_URL": "https://mymusic-api.lv5.uk",
+		// YouTube downloads running at once on the home server; its MAX_YT must be at least as high (1-10).
+		"MAX_YOUTUBE": "5"
 	},
 	"r2_buckets": [
 		{
