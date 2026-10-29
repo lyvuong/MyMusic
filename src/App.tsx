@@ -791,7 +791,7 @@ function LibraryTools({ lib, home, recheck }: { lib: LibraryState; home: ServerS
       <div hidden={fixOpen}>
         <h2>Library tools</h2>
         <p className="muted">Everything here updates the shared library for the whole family. New songs show up in the Library by themselves when a job finishes.</p>
-        <Organize syncNas={syncNas} home={home} recheck={recheck} />
+        <Organize syncNas={syncNas} refresh={refresh} home={home} recheck={recheck} />
         <section className="tool">
           <h3>Fix Vietnamese names</h3>
           <p className="muted">Finds Vietnamese titles, albums and artists with missing accents or wrong capitals. You pick which names to ask the AI about, and review every fix before it is saved.</p>
@@ -1017,7 +1017,12 @@ interface YtRow {
   ai: boolean;
   /** Unticked by the owner: left out when the rest are added. */
   skip: boolean;
+  /** A song with this title and artist is in the library already; such a row starts unticked. */
+  have: boolean;
 }
+
+/** A song sent to download, kept so "Check which are missing" can look for it in the library and send it again. */
+interface YtSent { url: string; title: string; artist: string; album: string; ai: boolean; playlist: string }
 
 /** Why none of the looked-up links can be added yet, for the line under the form. */
 function ytHint(all: YtRow[]): string {
@@ -1038,7 +1043,7 @@ function ytHint(all: YtRow[]): string {
   return why.length ? `Not ready: ${why.join("; ")}.` : "";
 }
 
-function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | null>; home: ServerStatus | null; recheck: () => Promise<void> }) {
+function Organize({ syncNas, refresh, home, recheck }: { syncNas: () => Promise<string | null>; refresh: () => Promise<void>; home: ServerStatus | null; recheck: () => Promise<void> }) {
   const down = home !== null && !home.ok;
   const { busy, msg, runs } = useSyncExternalStore(watchOrganize, () => organizeState);
   // An import and an enrich may run at the same time (the server queues them for the library); each button only waits for its own kind.
@@ -1088,6 +1093,9 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
   const [ytPlaylist, setYtPlaylist] = useState("");
   /** The MyMusic playlist the songs of a pasted YouTube playlist join; blank adds them to the library only. */
   const [ytListName, setYtListName] = useState("");
+  const [ytSent, setYtSent] = useState<YtSent[]>([]);
+  const [ytMissing, setYtMissing] = useState<YtSent[] | null>(null);
+  const [ytChecking, setYtChecking] = useState(false);
   const patchRow = (url: string, patch: Partial<YtRow>) => setYtRows((rows) => rows.map((r) => (r.url === url ? { ...r, ...patch } : r)));
   const lookUp = async (links?: string[]) => {
     let urls = [...new Set((links ?? ytText.split(/\s+/)).filter(Boolean))];
@@ -1113,12 +1121,14 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
     if (!urls.length) return;
     setYtBusy(true);
     setYtErr("");
-    setYtRows(urls.map((url) => ({ url, info: null, error: "", title: "", artist: "", album: "", ai: false, skip: false })));
+    setYtRows(urls.map((url) => ({ url, info: null, error: "", title: "", artist: "", album: "", ai: false, skip: false, have: false })));
     const queue = [...urls];
+    const named: { url: string; title: string; artist: string }[] = [];
     const worker = async () => {
       for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
         try {
           const info = await api.youtubeInfo(url);
+          named.push({ url, title: info.title, artist: info.artist });
           patchRow(url, { info, title: info.title, artist: info.artist, album: info.album || "YouTube", ai: info.aiLabel || info.aiHint });
         } catch (e) {
           patchRow(url, { error: e instanceof Error ? e.message : "Could not read that link" });
@@ -1126,6 +1136,15 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
       }
     };
     await Promise.all([worker(), worker(), worker()]);
+    // Songs the library has already start unticked, so only the missing ones are downloaded.
+    try {
+      if (named.length) {
+        const { found } = await api.youtubeCheck(named.map((r) => ({ title: r.title, artist: r.artist })));
+        named.forEach((r, i) => { if (found[i]) patchRow(r.url, { have: true, skip: true }); });
+      }
+    } catch {
+      /* every song stays ticked; Beets skips a duplicate anyway */
+    }
     setYtBusy(false);
   };
   const usable = (r: YtRow) => !r.skip && r.info !== null && !r.info.tooLong && r.title.trim() !== "" && r.artist.trim() !== "";
@@ -1134,8 +1153,14 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
     setYtErr("");
     const left: YtRow[] = [];
     const started: string[] = [];
+    const existing: { title: string; artist: string }[] = [];
+    const sent: YtSent[] = [];
+    const playlist = ytListName.trim();
     for (const r of ytRows) {
-      if (r.skip) continue;
+      if (r.skip) {
+        if (r.have && playlist) existing.push({ title: r.title, artist: r.artist });
+        continue;
+      }
       if (!usable(r)) {
         left.push(r);
         continue;
@@ -1143,10 +1168,21 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
       try {
         const run = await api.importYoutube({ url: r.url, title: r.title, artist: r.artist, album: r.album, ai: r.ai, ...(ytListName.trim() ? { playlist: ytListName.trim() } : {}) });
         started.push(run.id);
+        sent.push({ url: r.url, title: r.title, artist: r.artist, album: r.album, ai: r.ai, playlist });
       } catch (e) {
         left.push({ ...r, error: e instanceof Error ? e.message : "Failed" });
       }
     }
+    if (existing.length) {
+      try {
+        const { added } = await api.youtubePlaylistAdd(playlist, existing);
+        if (added) setYtErr(`${added} song${added === 1 ? "" : "s"} already in the library ${added === 1 ? "was" : "were"} added to the playlist "${playlist}".`);
+        await refresh();
+      } catch (e) {
+        setYtErr(e instanceof Error ? e.message : "Could not add the songs already in the library to the playlist");
+      }
+    }
+    if (sent.length) { setYtSent((old) => [...old.filter((o) => !sent.some((s) => s.url === o.url)), ...sent]); setYtMissing(null); }
     setYtRows(left);
     if (!left.length && !ytMore.length) setYtText("");
     setYtBusy(false);
@@ -1157,6 +1193,50 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
   };
 
   const ytRuns = runs.filter((r) => r.kind === "youtube" && isOpen(r));
+
+  /** Looks for the songs sent to download in the library; the ones that are not there can be sent again. */
+  const checkMissing = async () => {
+    setYtChecking(true);
+    setYtErr("");
+    try {
+      const missing: YtSent[] = [];
+      for (let i = 0; i < ytSent.length; i += 100) {
+        const part = ytSent.slice(i, i + 100);
+        const { found } = await api.youtubeCheck(part.map((s) => ({ title: s.title, artist: s.artist })));
+        part.forEach((s, j) => { if (!found[j]) missing.push(s); });
+      }
+      setYtMissing(missing);
+      if (!missing.length) {
+        setYtErr(`All ${ytSent.length} song${ytSent.length === 1 ? "" : "s"} sent are in the library.`);
+        setYtSent([]);
+      }
+    } catch (e) {
+      setYtErr(e instanceof Error ? e.message : "Could not check the library");
+    }
+    setYtChecking(false);
+  };
+  const retryMissing = async () => {
+    if (!ytMissing?.length) return;
+    setYtChecking(true);
+    setYtErr("");
+    const started: string[] = [];
+    const failed: YtSent[] = [];
+    for (const s of ytMissing) {
+      try {
+        const run = await api.importYoutube({ url: s.url, title: s.title, artist: s.artist, album: s.album, ai: s.ai, ...(s.playlist ? { playlist: s.playlist } : {}) });
+        started.push(run.id);
+      } catch (e) {
+        failed.push(s);
+        setYtErr(e instanceof Error ? e.message : "Failed");
+      }
+    }
+    setYtMissing(failed.length ? failed : null);
+    setYtChecking(false);
+    if (started.length) {
+      await refreshRuns();
+      void track(() => sync.current(), started);
+    }
+  };
 
   // A link sent by the "Add to MyMusic" bookmark (?yt=…) is looked up at once, so only the names are left to confirm.
   const incoming = useRef(incomingYoutube);
@@ -1223,7 +1303,7 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
               <legend>
                 <label>
                   <input type="checkbox" checked={!r.skip} disabled={ytBusy} onChange={(e) => patchRow(r.url, { skip: !e.target.checked })} />{" "}
-                  <small className={r.skip ? "muted" : ""}>{r.skip ? "Not adding " : ""}{r.info ? `${r.artist} – ${r.title}` : r.url}</small>
+                  <small className={r.skip ? "muted" : ""}>{r.skip ? "Not adding " : ""}{r.info ? `${r.artist} – ${r.title}` : r.url}{r.have ? " · already in your library" : ""}</small>
                 </label>
               </legend>
               {!r.skip && r.error && <p className="error" role="alert">{r.error}</p>}
@@ -1251,8 +1331,10 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
           ))}
           {ytRows.length > 0 && (
             <p>
-              <button type="submit" className="primary" disabled={ytBusy || down || !ytRows.some(usable)}>
-                Add {ytRows.filter(usable).length > 1 ? `${ytRows.filter(usable).length} songs` : "to library"}
+              <button type="submit" className="primary" disabled={ytBusy || down || (!ytRows.some(usable) && !(ytListName.trim() && ytRows.some((r) => r.have && r.skip)))}>
+                {ytRows.some(usable)
+                  ? `Add ${ytRows.filter(usable).length > 1 ? `${ytRows.filter(usable).length} songs` : "to library"}`
+                  : "Add the songs already in the library to the playlist"}
               </button>{" "}
               <button type="button" className="link" disabled={ytBusy} onClick={() => { setYtRows([]); setYtText(""); setYtMore([]); setYtPlaylist(""); setYtListName(""); }}>Start over</button>
             </p>
@@ -1277,8 +1359,26 @@ function Organize({ syncNas, home, recheck }: { syncNas: () => Promise<string | 
           {ytRows.length > 0 && !ytBusy && !ytRows.some(usable) && (
             <p><small className="muted">{ytHint(ytRows)}</small></p>
           )}
-          {ytErr && <p className="error" role="alert">{ytErr}</p>}
+          {ytErr && <p className={/added to the playlist|are in the library/.test(ytErr) ? "muted" : "error"} role="alert">{ytErr}</p>}
         </form>
+        {ytSent.length > 0 && (
+          <div>
+            <p>
+              <small className="muted">{ytSent.length} song{ytSent.length === 1 ? "" : "s"} sent to download. </small>
+              <button type="button" className="link" disabled={ytChecking || ytBusy || ytRuns.length > 0} onClick={() => void checkMissing()}>
+                {ytChecking ? "Checking…" : "Check which are missing"}
+              </button>
+              {ytRuns.length > 0 && <small className="muted"> · wait until the downloads and the library sync are done</small>}
+            </p>
+            {ytMissing && ytMissing.length > 0 && (
+              <>
+                <p className="error" role="status">{ytMissing.length} not in the library yet:</p>
+                <ul>{ytMissing.map((s) => <li key={s.url}><small>{s.artist} – {s.title}</small></li>)}</ul>
+                <p><button type="button" className="primary" disabled={ytChecking || ytRuns.length > 0 || down} onClick={() => void retryMissing()}>Try again for these {ytMissing.length}</button></p>
+              </>
+            )}
+          </div>
+        )}
         <p>
           <small className="muted">
             One click from YouTube: drag <a ref={bookmark} className="link" onClick={(e) => e.preventDefault()}>Add to MyMusic</a> to your bookmarks bar, then click it while a video is open.

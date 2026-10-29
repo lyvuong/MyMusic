@@ -9,7 +9,7 @@ import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
-import { queueForPlaylist } from "./ytplaylist";
+import { addToPlaylist, findInLibrary, queueForPlaylist } from "./ytplaylist";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, homeYoutubePlaylist, type TagOp } from "./home";
 import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
 import { getRatings, setRating } from "./ratings";
@@ -725,6 +725,34 @@ app.post("/api/beets/youtube/info", async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : "Could not read that link" }, 502);
   }
+});
+
+const songNames = (v: unknown) =>
+  Array.isArray(v) && v.length <= 100 && v.every((s) => typeof s?.title === "string" && typeof s?.artist === "string")
+    ? (v as { title: string; artist: string }[]).map((s) => ({ title: s.title.trim().slice(0, 200), artist: s.artist.trim().slice(0, 200) }))
+    : null;
+
+/** Which of these songs are in the library already (owner only): the library id of each, or null. */
+app.post("/api/beets/youtube/check", async (c) => {
+  const denied = youtubeOwner(c);
+  if (denied) return denied;
+  const b = await c.req.json<{ songs?: unknown }>().catch(() => ({}) as { songs?: unknown });
+  const songs = songNames(b.songs);
+  if (!songs) return c.json({ error: "songs must be a list of up to 100 titles with artists." }, 400);
+  return c.json({ found: await findInLibrary(c.env.DB, c.get("family").familyId, songs) });
+});
+
+/** Puts songs that are in the library already into the member's playlist of that name, without downloading anything. */
+app.post("/api/beets/youtube/playlist-add", async (c) => {
+  const denied = youtubeOwner(c);
+  if (denied) return denied;
+  const b = await c.req.json<{ playlist?: string; songs?: unknown }>().catch(() => ({}) as { playlist?: string; songs?: unknown });
+  const songs = songNames(b.songs);
+  const name = typeof b.playlist === "string" ? b.playlist.trim().slice(0, 100) : "";
+  if (!songs || !name) return c.json({ error: "A playlist name and a list of songs are required." }, 400);
+  const { familyId } = c.get("family");
+  const ids = (await findInLibrary(c.env.DB, familyId, songs)).filter((x): x is string => x !== null);
+  return c.json({ added: await addToPlaylist(c.env.DB, familyId, c.get("user").uid, name, ids) });
 });
 
 /** Lists the videos of a YouTube / YouTube Music playlist (owner only); the app then looks each one up as usual. */

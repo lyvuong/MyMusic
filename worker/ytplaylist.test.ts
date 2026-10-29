@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { applyPendingPlaylists, queueForPlaylist } from "./ytplaylist";
+import { addToPlaylist, applyPendingPlaylists, findInLibrary, queueForPlaylist } from "./ytplaylist";
 
 /** The real schema in an in-memory SQLite behind the small part of D1's API the code uses. */
 function database() {
@@ -62,5 +62,31 @@ describe("applyPendingPlaylists", () => {
     await queueForPlaylist(db, "f", "u1", "Mix", "B song", "Band");
     await applyPendingPlaylists(db, "f");
     expect(listed(sql, "Mix")).toEqual(["A song", "B song"]);
+  });
+});
+
+describe("findInLibrary", () => {
+  it("finds songs by title and artist ignoring case, accents and brackets, and reports the missing ones", async () => {
+    const { sql, db } = database();
+    addTrack(sql, "t1", "Sultans of Swing", "Dire Straits");
+    addTrack(sql, "t2", "Con Yeu Em Mai (Remastered)", "Khanh Ly");
+    const r = await findInLibrary(db, "f", [
+      { title: "sultans of swing", artist: "DIRE STRAITS" },
+      { title: "Còn Yêu Em Mãi", artist: "Khanh Ly" },
+      { title: "Sultans of Swing", artist: "Someone Else" },
+      { title: "Money for Nothing", artist: "Dire Straits" },
+    ]);
+    expect(r).toEqual(["t1", null, null, null].map((x, i) => (i === 1 ? "t2" : x)));
+  });
+});
+
+describe("addToPlaylist", () => {
+  it("creates the playlist, appends once and counts only new songs", async () => {
+    const { sql, db } = database();
+    addTrack(sql, "t1", "A", "X");
+    addTrack(sql, "t2", "B", "X");
+    expect(await addToPlaylist(db, "f", "u1", "Mix", ["t1"])).toBe(1);
+    expect(await addToPlaylist(db, "f", "u1", "Mix", ["t1", "t2"])).toBe(1);
+    expect(listed(sql, "Mix")).toEqual(["A", "B"]);
   });
 });

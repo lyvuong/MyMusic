@@ -223,7 +223,7 @@ Each edit is sent to the home server API first, which writes the tags into the f
 
 ### YouTube playlists
 
-Songs added from a pasted YouTube playlist also go into a MyMusic playlist of the same name (editable; blank for none). The request waits in `pending_playlist` (migration `0025`) and the next library sync adds each song by title + artist, creating the playlist when it does not exist (`worker/ytplaylist.ts`).
+Songs added from a pasted YouTube playlist also go into a MyMusic playlist of the same name (editable; blank for none). The request waits in `pending_playlist` (migration `0025`) and the next library sync adds each song by title + artist, creating the playlist when it does not exist (`worker/ytplaylist.ts`). Looking a playlist up also checks the library (`POST /api/beets/youtube/check`, title + artist compared loosely): songs already there start unticked and are only added to the playlist (`/api/beets/youtube/playlist-add`) without downloading. After adding, **Check which are missing** compares the songs sent with the library and **Try again** sends the missing ones again.
 
 ### Album covers
 
