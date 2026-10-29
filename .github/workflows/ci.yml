@@ -83,7 +83,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           npx wrangler d1 migrations apply mymusic --remote
-          npx wrangler deploy
+          npx wrangler deploy --keep-vars
 
   publish-api:
     name: Publish home API image
