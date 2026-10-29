@@ -8,6 +8,8 @@ in the X-Agent-Key header. Endpoints (fixed; no paths or commands ever come from
                  checks that the beets container answers
   POST /edit     {"ops": [...]}  writes edited names into the files and the Beets library, waits for the result
   POST /cover    {"album": "...", "image": "<base64 jpeg>"}  writes cover.jpg into the folders of that album (embeds it when a folder is shared)
+  POST /delete-songs  {"groups": [{"keep": {title, artist, album}, "remove": [{title, artist, album, trackNo, duration}]}]}  deletes duplicate copies:
+                 the files and their Beets entries, only when the kept copy is in the library
   POST /yt-playlist  {"url": "https://music.youtube.com/playlist?list=..."}  lists the videos of a playlist without downloading them
   POST /jobs     {"id": "...", "kind": "import" | "enrich"}  starts a long job and returns at once (202); progress and the
                  result are posted to the Worker (/api/beets/agent/progress and /report) under that run id

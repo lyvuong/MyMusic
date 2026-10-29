@@ -77,6 +77,16 @@ export interface BeetsRun {
 }
 
 /** What the home server read from a YouTube link, to be confirmed or edited before the audio is downloaded. */
+/** A song in a group of duplicates. */
+export interface DupSong {
+  id: string; source: "r2" | "nas"; title: string; artist: string; album: string;
+  duration: number; trackNo: number; size: number;
+  /** How many playlists hold it, its best rating (0 = unrated) and how often it was played. */
+  lists: number; rating: number; plays: number;
+}
+/** Copies of one song, with the id of the one suggested to keep. */
+export interface DupGroup { songs: DupSong[]; keep: string }
+
 export interface YoutubePlaylist {
   title: string;
   items: { url: string; title: string; duration: number }[];

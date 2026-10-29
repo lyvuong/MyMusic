@@ -6,7 +6,7 @@ import subprocess
 from http.server import BaseHTTPRequestHandler
 
 import config
-from edit import COVER_PY, do_edit, do_fingerprint
+from edit import COVER_PY, do_delete, do_edit, do_fingerprint
 from jobs import JOBS
 from jobs.youtube import clean_playlist_url, clean_tag, clean_url, yt_info, yt_playlist
 from jobs.importer import count_inbox
@@ -83,6 +83,15 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(ops, list) or not ops or len(ops) > 500 or not all(isinstance(o, dict) for o in ops):
                 return self.send(400, {"error": "ops must be a list of 1-500 edits"})
             return self.send(*do_edit(ops))
+        if self.path == "/delete-songs":
+            groups = b.get("groups")
+            name = lambda m: isinstance(m, dict) and all(isinstance(m.get(k), str) for k in ("title", "artist", "album"))
+            ok = isinstance(groups, list) and 1 <= len(groups) <= 50 and all(
+                isinstance(g, dict) and name(g.get("keep")) and isinstance(g.get("remove"), list) and 1 <= len(g["remove"]) <= 20 and all(name(m) for m in g["remove"])
+                for g in groups)
+            if not ok:
+                return self.send(400, {"error": "groups must be 1-50 groups, each with the song to keep and 1-20 copies to remove (title, artist, album)"})
+            return self.send(*do_delete(groups))
         if self.path == "/fingerprint":
             songs = b.get("songs")
             ok = isinstance(songs, list) and 1 <= len(songs) <= 5 and all(

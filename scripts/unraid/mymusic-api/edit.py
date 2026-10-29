@@ -204,6 +204,64 @@ print("RESULT " + json.dumps({"written": written, "embedded": embedded, "shadowe
 sys.exit(1 if failed else 0)
 '''
 
+# Deletes duplicate copies of songs: the files and their Beets library entries (and an album left empty). Each group names
+# the copy to keep, which must be in the library, and the copies to remove; a copy is removed only when exactly one library
+# song matches its names (and length, if several share them) and it is not the kept one. Nothing outside /music is touched.
+DELETE_PY = COMMON_PY + r'''
+groups = json.load(sys.stdin)
+items = list(lib.items())
+MUSIC = "/music/"
+
+def find(m):
+    # The file's path inside the music folder (from Navidrome) tells two copies with the same names apart exactly.
+    rel = nfc(m.get("path") or "").lstrip("/")
+    if rel:
+        return [it for it in items if nfc(os.fsdecode(it.path)).endswith("/" + rel)]
+    found = [it for it in items if same(it.title, m["title"]) and same(it.artist, m["artist"]) and same(it.album, m["album"])]
+    if len(found) > 1 and m.get("trackNo"):
+        found = [it for it in found if it.track == m["trackNo"]] or found
+    if len(found) > 1 and m.get("duration"):
+        found = [it for it in found if abs((it.length or 0) - m["duration"]) <= 3.0] or found
+    return found
+
+out = []
+for g in groups:
+    keep = find(g["keep"])
+    keep_ids = {it.id for it in keep}
+    for m in g["remove"]:
+        row = {"title": m["title"], "album": m["album"], "status": "", "why": ""}
+        found = find(m)
+        if not keep:
+            row["status"], row["why"] = "skipped", "the copy to keep was not found in the Beets library"
+        elif len(found) != 1:
+            row["status"], row["why"] = "skipped", "not found in the Beets library" if not found else "several songs share these names"
+        elif found[0].id in keep_ids:
+            row["status"], row["why"] = "skipped", "it is the same library song as the one to keep"
+        else:
+            it = found[0]
+            try:
+                real = resolve(it.path)
+                if real is None:
+                    it.remove(delete=False)
+                    row["status"], row["why"] = "deleted", "the file was already gone; the library entry was removed"
+                elif not os.fsdecode(real).startswith(MUSIC):
+                    row["status"], row["why"] = "skipped", "the file is outside the music folder"
+                else:
+                    if real != it.path:
+                        it.path = real
+                        it.store()
+                    path = os.fsdecode(real)
+                    it.remove(delete=True)
+                    row["status"] = "deleted"
+                    print("deleted %s" % path)
+            except Exception as e:
+                row["status"], row["why"] = "failed", str(e)
+                print("could not delete %s: %s" % (m["title"], e))
+        out.append(row)
+print("RESULT " + json.dumps(out))
+'''
+
+
 # Runs the script above with the interpreter beets itself uses (read from the `beet` launcher).
 LAUNCH = 'PYBIN=$(head -n1 "$(command -v beet)" | sed "s/^#!//"); exec $PYBIN -c "$0"'
 
@@ -330,6 +388,26 @@ def do_edit(payload, script=None, what="edit"):
     if p.returncode != 0 or result.get("failed"):
         return 500, {"error": "Could not write %d %s: %s" % (result.get("failed", 0), "folder(s)" if script is COVER_PY else "file(s)", text.strip()[-400:])}
     return 200, {"written": result.get("written", 0), "embedded": result.get("embedded", 0), "shadowed": result.get("shadowed", []), "skipped": result.get("skipped", []), "missing": result.get("missing", []), "log": text[-2000:]}
+
+
+def do_delete(groups):
+    """Deletes duplicate copies (see DELETE_PY). Returns (status, body) with one result per copy, in order."""
+    try:
+        with beets_lock(10):
+            try:
+                p = run_in_beets(DELETE_PY, groups, config.EDIT_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                return 504, {"error": "The delete took too long and was stopped. Some files may have gone; look again."}
+            except OSError as e:
+                return 503, {"error": "Cannot run docker: %s" % e}
+    except TimeoutError as e:
+        return 503, {"error": "Cannot delete right now: %s. Try again when it finishes." % e}
+    text = p.stdout + p.stderr
+    append_file(os.path.join(config.APPDATA, "tag-edits.log"), "=== %s delete duplicates ===\n%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
+    result = result_line(text)
+    if not isinstance(result, list):
+        return 500, {"error": "The delete failed: " + (text.strip().splitlines() or ["no output"])[-1][:300]}
+    return 200, {"results": result}
 
 
 def do_fingerprint(songs):

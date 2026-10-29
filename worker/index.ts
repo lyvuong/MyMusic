@@ -9,6 +9,7 @@ import { findAlbumArt, findArtistImage } from "./artwork";
 import { cleanName, delta, editTitles, editTrack, renameGroup, savePlaylist } from "./library";
 import { agentKeyOk, beginRun, enqueueYoutube, failRun, finishRun, getRun, goneFromServer, listRuns, resetRunning, startAgentRun, updateProgress } from "./beets";
 import { dispatchQueued } from "./ytqueue";
+import { findDuplicates, resolveDuplicates } from "./duplicates";
 import { addToPlaylist, findInLibrary, queueForPlaylist } from "./ytplaylist";
 import { HomeError, homeConfigured, homeCover, homeEdit, homeStartJob, homeStatus, homeYoutubeInfo, homeYoutubePlaylist, type TagOp } from "./home";
 import { finishSync, nasEnabled, proxyCover, proxyStream, scanning, startScan, syncPage } from "./nas";
@@ -753,6 +754,24 @@ app.post("/api/beets/youtube/playlist-add", async (c) => {
   const { familyId } = c.get("family");
   const ids = (await findInLibrary(c.env.DB, familyId, songs)).filter((x): x is string => x !== null);
   return c.json({ added: await addToPlaylist(c.env.DB, familyId, c.get("user").uid, name, ids) });
+});
+
+/** Songs the library holds more than once, grouped, with the copy to keep suggested (owner only). */
+app.get("/api/library/duplicates", async (c) => {
+  if (c.get("family").role !== "owner") return c.json({ error: "owner only" }, 403);
+  return c.json({ groups: await findDuplicates(c.env.DB, c.get("family").familyId) });
+});
+
+/** Deletes the chosen duplicate copies for good and moves their playlist places and ratings to the kept song (owner only). */
+app.post("/api/library/duplicates/resolve", async (c) => {
+  const denied = youtubeOwner(c);
+  if (denied) return denied;
+  const b = await c.req.json<{ groups?: { keep?: string; remove?: string[] }[] }>().catch(() => ({}) as { groups?: undefined });
+  const groups = b.groups;
+  const ok = Array.isArray(groups) && groups.length >= 1 && groups.length <= 50 &&
+    groups.every((g) => typeof g.keep === "string" && Array.isArray(g.remove) && g.remove.length >= 1 && g.remove.length <= 20 && g.remove.every((x) => typeof x === "string"));
+  if (!ok) return c.json({ error: "groups must be 1-50 groups with the song to keep and 1-20 copies to remove." }, 400);
+  return c.json(await resolveDuplicates(c.env, c.get("family").familyId, groups as { keep: string; remove: string[] }[]));
 });
 
 /** Lists the videos of a YouTube / YouTube Music playlist (owner only); the app then looks each one up as usual. */

@@ -88,6 +88,7 @@ A small Python service (`scripts/unraid/mymusic-api/`, entry point `server.py`, 
 | `POST /edit` | Writes edited names into the files and the Beets library, and waits for the result |
 | `POST /cover` | Writes an album's cover image as `cover.jpg` into the folders of its songs (what Navidrome looks for first) and records it in the Beets library |
 | `POST /yt-info` | Reads a YouTube link's title, artist and length with yt-dlp, without downloading it |
+| `POST /delete-songs` | Deletes duplicate copies of songs: the file and its Beets entry (`item.remove(delete=True)`), only when the copy to keep is in the library and exactly one library song matches (by the path Navidrome gives, else by names); nothing outside `/music` is touched |
 | `POST /yt-playlist` | Lists the videos of a YouTube / YouTube Music playlist (`--flat-playlist`, up to 500, private and deleted ones skipped); the app then looks them up 25 at a time |
 | `POST /jobs` | Starts an `import`, an `enrich` or a `youtube` download and returns at once; progress and result are posted back to the Worker (`/api/beets/agent/progress` and `/report`) under the run id |
 
@@ -224,6 +225,10 @@ Each edit is sent to the home server API first, which writes the tags into the f
 ### YouTube playlists
 
 Songs added from a pasted YouTube playlist also go into a MyMusic playlist of the same name (editable; blank for none). The request waits in `pending_playlist` (migration `0025`) and the next library sync adds each song by title + artist, creating the playlist when it does not exist (`worker/ytplaylist.ts`). Looking a playlist up also checks the library (`POST /api/beets/youtube/check`, title + artist compared loosely): songs already there start unticked and are only added to the playlist (`/api/beets/youtube/playlist-add`) without downloading. After adding, **Check which are missing** compares the songs sent with the library and **Try again** sends the missing ones again.
+
+### Find duplicate songs
+
+Library tools has **Find duplicate songs** (owner only): `GET /api/library/duplicates` groups songs with the same title (ignoring remaster and year notes, not live or remix) and artist whose lengths are within 6 seconds, and suggests the copy to keep (in a playlist, rated or played, then not a compilation, then the biggest file). Ten groups are shown at a time. Confirming calls `POST /api/library/duplicates/resolve`: the other copies' files are deleted for good on the home server (`/delete-songs`; an app upload in R2 is deleted from the bucket), their playlist places and ratings move to the kept copy, and Navidrome is asked to rescan. A copy the server cannot delete is left alone and reported. The existing **Delete song** in a song's menu only hides a NAS song until the next library sync brings it back, because it does not touch the file.
 
 ### Album covers
 

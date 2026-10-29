@@ -33,6 +33,13 @@ class CleanPlaylistUrl(unittest.TestCase):
             self.assertIsNone(clean_playlist_url(url), url)
 
 
+class BeetsScripts(unittest.TestCase):
+    def test_scripts_compile(self):
+        import edit
+        for script in (edit.EDIT_PY, edit.COVER_PY, edit.DELETE_PY):
+            compile(script, "script", "exec")
+
+
 class RunId(unittest.TestCase):
     def test_run_id_shape(self):
         self.assertTrue(config.RUN_ID_RE.match("abc-123_X"))

@@ -97,6 +97,11 @@ export async function homeStartJob(env: Env, id: string, kind: "import" | "enric
   await call<{ id: string }>(env, "POST", "/jobs", { ...extra, id, kind }, 15000);
 }
 
+/** Deletes duplicate copies on the home server (the files and their Beets entries). One result per copy, in order. */
+export function homeDeleteSongs(env: Env, groups: { keep: object; remove: object[] }[]) {
+  return call<{ results: { title: string; album: string; status: "deleted" | "skipped" | "failed"; why: string }[] }>(env, "POST", "/delete-songs", { groups }, 130000);
+}
+
 /** Lists the videos of a YouTube playlist without downloading them. */
 export function homeYoutubePlaylist(env: Env, url: string): Promise<YoutubePlaylist> {
   return call<YoutubePlaylist>(env, "POST", "/yt-playlist", { url }, 130000);
