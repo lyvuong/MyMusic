@@ -163,10 +163,14 @@ export async function savePlaylist(
     .first<{ owner_uid: string; family_id: string }>();
   if (existing && (existing.owner_uid !== uid || existing.family_id !== familyId)) return false;
   // Only keep tracks that belong to this family.
-  const ids = trackIds.length
-    ? new Set((await db.prepare(`SELECT id FROM tracks WHERE family_id = ? AND id IN (${trackIds.map(() => "?").join(",")})`)
-        .bind(familyId, ...trackIds).all<{ id: string }>()).results.map((r) => r.id))
-    : new Set<string>();
+  // D1 allows at most 100 bound values per query, so a long playlist is checked in chunks.
+  const ids = new Set<string>();
+  for (let i = 0; i < trackIds.length; i += 90) {
+    const part = trackIds.slice(i, i + 90);
+    const rows = await db.prepare(`SELECT id FROM tracks WHERE family_id = ? AND id IN (${part.map(() => "?").join(",")})`)
+      .bind(familyId, ...part).all<{ id: string }>();
+    for (const r of rows.results) ids.add(r.id);
+  }
   const valid = trackIds.filter((t) => ids.has(t));
   await db.batch([
     db.prepare(

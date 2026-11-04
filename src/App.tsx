@@ -704,7 +704,10 @@ function Playlists({ lib, uid }: { lib: LibraryState; uid: string }) {
   if (open) {
     const mine = open.ownerUid === uid;
     const tracks = open.trackIds.map((id) => lib.tracks.get(id)).filter((t): t is Track => !!t);
-    const save = async (patch: Partial<Playlist>) => { await api.savePlaylist({ ...open, ...patch }); await lib.refresh(); };
+    const save = async (patch: Partial<Playlist>) => {
+      try { await api.savePlaylist({ ...open, ...patch }); await lib.refresh(); }
+      catch (e) { alert(`Could not save the playlist: ${e instanceof Error ? e.message : "failed"}`); }
+    };
     return (
       <>
         <button className="link" onClick={() => setOpenId(null)}>← All playlists</button>
